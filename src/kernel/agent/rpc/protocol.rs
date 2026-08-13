@@ -44,6 +44,8 @@ pub enum Method {
     },
     /// 用户可调工具/命令清单（GUI 工具面板）。
     ListTools,
+    /// 教学规则（数据根 AGENTS.md）加载状态：前端展示「规则已加载/回退静态提示」。
+    GetRulesStatus,
 }
 
 /// 自定义方法兜底：未知 method 名连同 params 与其余字段一起交给 `RpcExtension`。

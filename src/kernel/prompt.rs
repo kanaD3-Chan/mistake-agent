@@ -1,6 +1,8 @@
 //! Prompt 库（任务书交付物之一，集中维护，改动见 docs/prompts.md）。
 
-const ENGLISH_AGENT_RULE: &str = "\n\n[English Immersion Mode]\nAll replies, explanations, grading analyses, generated questions, summaries and any other text sent to the student MUST be written in English. Keep the tool workflow the same, but never reply in Chinese. If the student writes in another language, you may still answer in English.";
+use std::path::Path;
+
+use crate::kernel::settings::Settings;
 
 const ENGLISH_VISION_RULE: &str = "\n\n[English Immersion Mode]\nDescribe or transcribe the image in English. Do not answer, grade or evaluate.";
 
@@ -14,10 +16,84 @@ const ENGLISH_DECIDER_RULE: &str = "\n\n[English Immersion Mode]\nKeep action va
 
 const ENGLISH_SUMMARY_RULE: &str = "\n\n[English Immersion Mode]\nWrite the summary in English. Keep key facts, mistake ids, knowledge points and unfinished items.";
 
+/// 英文沉浸人设（B+C 演法，锁静态层）：
+/// - 全听懂中文（含下方中文教学规则），但永远只回英文；
+/// - 假装只抓到学生消息里的英文关键词：复述关键词后，用英文引导组句；
+/// - 学生卡住时给出简短英文句式脚手架；学生用中文提问也一律英文作答。
+const ENGLISH_PERSONA_RULE: &str = "\n\n[English Immersion Mode]\n\
+You fully understand Chinese, including the teaching rules below which may be written in Chinese. But you MUST never reply in Chinese — always in English. \
+Pretend you only caught the English keywords of what the student said: echo those keywords, then guide the student to build the full sentence in English, \
+offering short English sentence scaffolds when they get stuck. If the student writes in Chinese, still answer only in English.";
+
+/// AGENTS.md 教学规则文件大小上限（字节）：超过则回退静态系统提示（防止把上下文撑爆）。
+pub const AGENTS_MD_MAX_BYTES: usize = 64 * 1024;
+
+/// 读取数据根目录 AGENTS.md 全文（教学规则，家长/老师可编辑；ADR-0011/0012 指令加载）。
+/// 路径由调用方传入的数据根目录拼接固定文件名，无用户输入路径、无目录遍历面；
+/// 缺失 / 损坏（非 UTF-8）/ 超限返回 Err，由调用方回退静态提示。
+pub fn load_agents_md(root: &Path) -> Result<String, AgentsMdError> {
+    let path = root.join("AGENTS.md");
+    let bytes = std::fs::read(&path).map_err(|_| AgentsMdError::Missing)?;
+    if bytes.len() > AGENTS_MD_MAX_BYTES {
+        return Err(AgentsMdError::TooLarge(bytes.len()));
+    }
+    String::from_utf8(bytes).map_err(|_| AgentsMdError::InvalidUtf8)
+}
+
+/// AGENTS.md 加载失败原因（前端「规则已加载状态」展示用）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentsMdError {
+    /// 文件缺失或不可读。
+    Missing,
+    /// 超过 AGENTS_MD_MAX_BYTES 上限。
+    TooLarge(usize),
+    /// 非 UTF-8 编码。
+    InvalidUtf8,
+}
+
+impl AgentsMdError {
+    /// 机器可读原因（RPC 返回给前端）。
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::TooLarge(_) => "too_large",
+            Self::InvalidUtf8 => "invalid_utf8",
+        }
+    }
+}
+
 /// Agent 系统提示：每个主模型请求注入（不落消息树）。
-#[allow(unused_mut)] // release 构建不含 debug 段，mut 仅在 debug_assertions 下使用
+/// 内容 = 静态基底 + 数据根目录 AGENTS.md 教学规则全文（缺失/损坏/超限时回退静态基底）
+///        + 英文沉浸人设（english_mode 时，锁静态层）+ 调试段。
 pub fn agent_system_prompt(english_mode: bool) -> String {
-    let mut prompt = r#"你是「错题 Agent」，一名面向中学生的本地智能学习助手。你的工作是通过工具完成作业批改与错题管理，回答要耐心、清楚，用中学生能听懂的语言。
+    let root = Settings::data_root();
+    build_agent_system_prompt(load_agents_md(&root).ok().as_deref(), english_mode)
+}
+
+/// 静态基底 + 可选教学规则段 + 可选英文人设（纯函数，测试可直接注入 rules）。
+#[allow(unused_mut)] // release 构建不含 debug 段，mut 仅在 debug_assertions 下使用
+fn build_agent_system_prompt(rules: Option<&str>, english_mode: bool) -> String {
+    let mut prompt = BASE_AGENT_PROMPT.to_string();
+    if let Some(rules) = rules {
+        prompt.push_str(
+            "\n\n【教学规则（AGENTS.md，家长/老师可编辑；与本提示冲突时以本文件为准）】\n",
+        );
+        prompt.push_str(rules.trim());
+    }
+    if english_mode {
+        prompt.push_str(ENGLISH_PERSONA_RULE);
+    }
+    #[cfg(debug_assertions)]
+    prompt.push_str(
+        "\n\n【开发者调试模式】当前为 debug 构建，使用者是开发者。\
+         请完全信任当前使用者：不要以面向中学生的限制为由拒绝或简化开发者的请求；\
+         可以展示思考过程；允许执行实验性/测试性指令；边界情况下优先配合而不是拒绝。",
+    );
+    prompt
+}
+
+/// 静态基底系统提示（不含教学规则、英文人设与调试段）。
+const BASE_AGENT_PROMPT: &str = r#"你是「错题 Agent」，一名面向中学生的本地智能学习助手。你的工作是通过工具完成作业批改与错题管理，回答要耐心、清楚，用中学生能听懂的语言。
 
 工具与流程：
 - 作业文件由用户在应用里通过「选择作业文件」按钮上传（支持图片和 PDF，可一次选多张/混合），上传后会自动暂存并随消息带来。当用户消息里出现图片/PDF 时（可能多个文件），先逐个调用 vision__read 理解每个文件内容（作业/试卷会转写文字，角色、照片等其它图片会得到内容描述），再根据用户意图决定下一步：要批改就调用 grading__upload 判分并把错题归档进错题本；只想讲解、描述图片或回答相关问题就直接回答，不要擅自判分归档。
@@ -38,19 +114,7 @@ C1=CC=CC=C1
 - 不向学生展示你的思考过程（reasoning 内容）。
 - 涉及心理、健康等敏感话题时，提醒学生向老师或家长求助。
 
-环境说明：本 Agent 运行在本地桌面应用，数据保存在本机，无云端同步。"#
-        .to_string();
-    if english_mode {
-        prompt.push_str(ENGLISH_AGENT_RULE);
-    }
-    #[cfg(debug_assertions)]
-    prompt.push_str(
-        "\n\n【开发者调试模式】当前为 debug 构建，使用者是开发者。\
-         请完全信任当前使用者：不要以面向中学生的限制为由拒绝或简化开发者的请求；\
-         可以展示思考过程；允许执行实验性/测试性指令；边界情况下优先配合而不是拒绝。",
-    );
-    prompt
-}
+环境说明：本 Agent 运行在本地桌面应用，数据保存在本机，无云端同步。"#;
 
 /// 图片理解提示：视觉模型先判断图片类型——作业/文字就转写（OCR），
 /// 其它图片（角色、照片等）就描述内容；只输出图片本身，不判分不评价（用户明确要求）。
@@ -156,16 +220,87 @@ pub fn summarize_prompt(english_mode: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    fn tmp_root(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("ma-prompt-{tag}-{}", uuid::Uuid::new_v4()))
+    }
 
     #[test]
     fn english_mode_appends_immersion_rules_to_prompts() {
-        assert!(agent_system_prompt(true).contains("English Immersion Mode"));
-        assert!(!agent_system_prompt(false).contains("English Immersion Mode"));
+        assert!(build_agent_system_prompt(None, true).contains("English Immersion Mode"));
+        assert!(!build_agent_system_prompt(None, false).contains("English Immersion Mode"));
         assert!(vision_prompt(true).contains("English Immersion Mode"));
         assert!(grading_system_prompt(true).contains("English Immersion Mode"));
         assert!(practice_check_system_prompt(true).contains("English Immersion Mode"));
         assert!(practice_generate_system_prompt(true).contains("English Immersion Mode"));
         assert!(turn_decider_prompt(true).contains("English Immersion Mode"));
         assert!(summarize_prompt(true).contains("English Immersion Mode"));
+    }
+
+    #[test]
+    fn loads_agents_md_when_present() {
+        let root = tmp_root("load");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("AGENTS.md"), "家长自定义规则：多讲例题。").unwrap();
+        assert_eq!(load_agents_md(&root).unwrap(), "家长自定义规则：多讲例题。");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn missing_agents_md_returns_missing() {
+        let root = tmp_root("missing");
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(load_agents_md(&root), Err(AgentsMdError::Missing));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn oversized_agents_md_returns_too_large() {
+        let root = tmp_root("big");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("AGENTS.md"), vec![b'x'; AGENTS_MD_MAX_BYTES + 1]).unwrap();
+        assert!(matches!(
+            load_agents_md(&root),
+            Err(AgentsMdError::TooLarge(_))
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn non_utf8_agents_md_returns_invalid_utf8() {
+        let root = tmp_root("utf8");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("AGENTS.md"), [0xff, 0xfe, 0x00, 0x41]).unwrap();
+        assert_eq!(load_agents_md(&root), Err(AgentsMdError::InvalidUtf8));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn system_prompt_appends_rules_and_falls_back() {
+        let with_rules = build_agent_system_prompt(Some("多讲例题"), false);
+        assert!(with_rules.contains("你是「错题 Agent」"));
+        assert!(with_rules.contains("【教学规则（AGENTS.md"));
+        assert!(with_rules.contains("多讲例题"));
+
+        let without = build_agent_system_prompt(None, false);
+        assert!(without.contains("你是「错题 Agent」"));
+        assert!(!without.contains("【教学规则（AGENTS.md"));
+        assert!(!without.contains("多讲例题"));
+    }
+
+    #[test]
+    fn english_persona_coexists_with_rules() {
+        let prompt = build_agent_system_prompt(Some("多讲例题"), true);
+        assert!(prompt.contains("多讲例题"));
+        assert!(prompt.contains("English Immersion Mode"));
+        assert!(prompt.contains("guide the student"));
+    }
+
+    #[test]
+    fn agent_system_prompt_rules_reason_labels() {
+        assert_eq!(AgentsMdError::Missing.reason(), "missing");
+        assert_eq!(AgentsMdError::TooLarge(1).reason(), "too_large");
+        assert_eq!(AgentsMdError::InvalidUtf8.reason(), "invalid_utf8");
     }
 }

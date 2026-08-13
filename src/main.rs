@@ -146,26 +146,42 @@ fn read_upload(path: String) -> Result<String, String> {
 fn open_attachment(path: String) -> Result<(), String> {
     let uploads = mistake_agent::kernel::settings::Settings::data_root().join("uploads");
     let canonical = verify_in_uploads(&path, &uploads)?;
-    let target = canonical.to_string_lossy().into_owned();
+    open_with_system(&canonical)
+}
+
+/// 用系统默认程序打开教学规则文件（数据根 AGENTS.md，家长/老师编辑用）。
+/// 路径固定为数据根目录下的 AGENTS.md（bootstrap 已保证存在），不接收用户输入路径。
+#[tauri::command]
+fn open_rules_file() -> Result<(), String> {
+    let path = mistake_agent::kernel::settings::Settings::data_root().join("AGENTS.md");
+    if !path.is_file() {
+        return Err("教学规则文件不存在，请先完成首次初始化".into());
+    }
+    open_with_system(&path)
+}
+
+/// 用系统默认程序打开文件（跨平台）。
+fn open_with_system(target: &std::path::Path) -> Result<(), String> {
+    let target = target.to_string_lossy().into_owned();
     #[cfg(target_os = "windows")]
     let status = Command::new("cmd")
         .args(["/C", "start", "", &target])
         .spawn()
-        .map_err(|e| format!("打开附件失败：{e}"))?
+        .map_err(|e| format!("打开文件失败：{e}"))?
         .wait();
     #[cfg(target_os = "macos")]
     let status = Command::new("open")
         .arg(&target)
         .spawn()
-        .map_err(|e| format!("打开附件失败：{e}"))?
+        .map_err(|e| format!("打开文件失败：{e}"))?
         .wait();
     #[cfg(target_os = "linux")]
     let status = Command::new("xdg-open")
         .arg(&target)
         .spawn()
-        .map_err(|e| format!("打开附件失败：{e}"))?
+        .map_err(|e| format!("打开文件失败：{e}"))?
         .wait();
-    status.map_err(|e| format!("打开附件失败：{e}"))?;
+    status.map_err(|e| format!("打开文件失败：{e}"))?;
     Ok(())
 }
 
@@ -190,7 +206,8 @@ fn main() {
             kernel_send,
             pick_homework_file,
             read_upload,
-            open_attachment
+            open_attachment,
+            open_rules_file
         ])
         .run(tauri::generate_context!())
         .expect("Tauri 应用运行失败");

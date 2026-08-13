@@ -71,6 +71,16 @@
 - [x] 启动/热更新时生效：`agent_system_prompt()`（[src/kernel/prompt.rs](../src/kernel/prompt.rs)）在 english_mode 下替换为英文版系统提示（或追加强指令"All replies must be in English"），全链路模型输出（含判分/出题/复盘）随主系统提示走英文。
 - [x] 范围决策：判定模型指令（判分、摘要等）是否也切英文——倾向跟随（同一沉浸语境）；GUI 界面文字暂不切（只切模型对话侧，UI 留中文更安全）。
 - [x] 提示词让模型在 english_mode 下判分/讲解也用英文（练习 + 答题一体）。
+- [x] `agent_system_prompt` 注入英文人设（B+C 演法：全听懂中文、假装只抓英文关键词、永远只回英文并用英文引导组句）；数据根 `AGENTS.md` 中文教学规则照常注入、不翻译（保持单文件，与 AGENTS.md 加载特性共存）。
+
+### 技术债：RPC 通用子集与扩展兜底两套架构并存
+
+合并远程 PR #12 时 `get_rules_status`（教学规则状态查询）选择保留在通用 `Method` 枚举（`WireMethod::Generic` 直分派），而远程已将 `test_connection` / `check_balance` / `get_cache_stats` 迁入 `CustomMethod`/`WireMethod::Custom` 兜底 + `RpcExtension`（`AppRpc`，src/kernel/agent/rpc/mod.rs）。当前两套机制并存：
+
+- 走扩展兜底（新架构）：`get_settings` / `set_settings` / `compute_result` / `test_connection` / `check_balance` / `get_cache_stats`；
+- 走通用枚举（旧架构残留）：`get_rules_status`。
+
+**待办**：后续把 `get_rules_status` 从通用 `Method` 枚举迁入 `AppRpc` 扩展，统一走 `CustomMethod` 兜底，彻底移除通用枚举对业务方法的依赖。迁移时同步删 `Method::GetRulesStatus` 枚举变体与 `handlers.rs` 对应分支，前端 wire 不变（`{method:"get_rules_status"}` 仍兼容）。
 
 ## 近期：桌面输入方式增强（规划，未落地）
 
@@ -91,17 +101,14 @@
 [src/kernel/bootstrap.rs](../src/kernel/bootstrap.rs) 的 `init_data_root` 在 `Kernel::new` 引导阶段与 `set_settings` 保存路径中执行（幂等）：创建数据根目录及 `sessions/ mistakes/ memory/ audit/ logs/ uploads/` 六个子目录；`AGENTS.md` 缺失时写入默认教学规则模板（存在不覆盖）。storage/logger/memory 各自的懒创建已收敛到 bootstrap。
 
 
-## AGENTS.md 加载进系统提示（未完成）
+## AGENTS.md 加载进系统提示（已完成）
 
-现状：AGENTS.md（教学规则，家长/老师可编辑）已完成初始化写入（见上一条），但内核系统提示仍是静态文本（[src/kernel/prompt.rs](../src/kernel/prompt.rs) agent_system_prompt()），文件内容对模型行为暂无影响。
+- [x] `agent_system_prompt()` 加载数据根目录 AGENTS.md 全文进系统提示（`load_agents_md`，PROJECT.md §6 指令加载 / ADR-0011 / ADR-0012）
+- [x] 缺失（Missing）/ 损坏（InvalidUtf8）/ 超限（TooLarge，64KB 上限）时回退静态文本；路径仅由数据根目录拼接固定文件名（无用户输入路径、无遍历面）
+- [x] 设置页「教学规则」卡片：`get_rules_status` RPC 展示规则已加载/回退状态与原因 + 「打开规则文件」按钮（`open_rules_file` Tauri 命令，系统默认程序打开，复用 `open_with_system`）
+- [x] 单测 6 项（正常/缺失/超限/编码 + 拼接回退 + reason 标签）
 
-目标：
-- agent_system_prompt() 改为加载数据根目录 AGENTS.md 全文进系统提示（PROJECT.md §6 指令加载 / ADR-0011 / ADR-0012）
-- 缺失、损坏或超限时回退当前静态文本；路径校验仅限数据根目录内（参照 bootstrap::init_data_root）
-- 建议与设置页「教学规则」编辑入口（或「打开规则文件」按钮）配套落地，前端展示规则已加载状态
-- 优先级：中（MVP 不阻塞，静态提示词已覆盖核心教学流程）
-
-参考：PROJECT.md §6 指令加载；[docs/adr/0011-single-data-root.md](adr/0011-single-data-root.md)、[docs/adr/0012-no-skill-system-v2.md](adr/0012-no-skill-system-v2.md)。
+现状：AGENTS.md（教学规则，家长/老师可编辑）全文注入主模型系统提示（在静态基底之后、debug 段之前），文件保存后下个请求即时生效；前端设置页可查看加载状态并一键打开编辑。
 
 
 ## 前端工具元数据去硬编码（已完成）

@@ -95,5 +95,25 @@ export function useKernel() {
     return invoke("pick_homework_file");
   }
 
-  return { onFrame, start, call, sendLine, triggerCommand, listTools, pickHomeworkFile };
+  /** 教学规则（数据根 AGENTS.md）加载状态：{loaded, path, reason?, bytes?}。 */
+  function getRulesStatus() {
+    return call("get_rules_status", {}, 10000);
+  }
+
+  /** 用系统默认程序打开教学规则文件（家长/老师编辑用）。 */
+  function openRulesFile() {
+    return invoke("open_rules_file");
+  }
+
+  return {
+    onFrame,
+    start,
+    call,
+    sendLine,
+    triggerCommand,
+    listTools,
+    pickHomeworkFile,
+    getRulesStatus,
+    openRulesFile,
+  };
 }

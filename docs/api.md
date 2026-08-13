@@ -41,9 +41,11 @@
 | `list_sessions` | — | ✅ M5 | 返回 `{sessions:[{key,goal,status,created_at,last_activity_at}]}` |
 | `read_session` | `key` | ✅ M5 | 返回 `{meta,messages}`（会话历史/消息树完整记录） |
 | `compute_result` | `compute_id`, `stdout`, `stderr`, `duration_ms` | ✅ M4 | GUI/Pyodide 验算回执（compute 桥接）；`compute_id` 必须回填事件 `compute_request` 的 id |
+| `get_rules_status` | — | ✅ | 返回 `{loaded: bool, path, reason?, bytes?}`：数据根 AGENTS.md 教学规则加载状态（`reason` = `missing`/`too_large`/`invalid_utf8`，缺失/损坏/超限时系统提示已回退静态文本） |
 
-> Tauri 侧命令（GUI 专属，见 src/main.rs）：`start_kernel`、`kernel_send`、`pick_homework_file`；前端经 `@tauri-apps/api` 的 `invoke` 调用（web/src/composables/useKernel.js）。
+> Tauri 侧命令（GUI 专属，见 src/main.rs）：`start_kernel`、`kernel_send`、`pick_homework_file`、`open_rules_file`；前端经 `@tauri-apps/api` 的 `invoke` 调用（web/src/composables/useKernel.js）。
 > `pick_homework_file` 返回 `{temp_path, asset_path, name}`：`temp_path` 是系统临时目录暂存（kernel 白名单，处理后删除），`asset_path` 是数据根目录 `uploads/` 的持久副本（Tauri asset 协议展示用，不随 temp 删除）。
+> `open_rules_file` 用系统默认程序打开数据根目录 `AGENTS.md`（教学规则编辑入口，路径固定不接收用户输入）。
 
 ### 2.2 响应帧（kernel → GUI）
 
@@ -191,7 +193,7 @@ pub trait UserPlugin {
 
 ```bash
 cd web && npm install && npm run build    # 前端构建（改过 web/ 后必须执行）
-cargo test                                 # 单元测试（142 项）
+cargo test                                 # 单元测试（149 项）
 cargo test --test live_api -- --ignored   # 真实 API 验收：hello + samples/ 三套样例
 cargo run --bin mistake-agent             # Tauri GUI（Wayland/X11 均可）
 ```

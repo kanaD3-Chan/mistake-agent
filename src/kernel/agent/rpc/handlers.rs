@@ -229,6 +229,24 @@ impl Kernel {
                     error: None,
                 }))
             }
+            Method::GetRulesStatus => {
+                let root = crate::kernel::settings::Settings::data_root();
+                let path = root.join("AGENTS.md");
+                let (loaded, reason, bytes) = match crate::kernel::prompt::load_agents_md(&root) {
+                    Ok(text) => (true, None::<&str>, Some(text.len())),
+                    Err(e) => (false, Some(e.reason()), None),
+                };
+                Ok(Some(RpcFrame::Response {
+                    id,
+                    result: Some(json!({
+                        "loaded": loaded,
+                        "path": path.to_string_lossy(),
+                        "reason": reason,
+                        "bytes": bytes,
+                    })),
+                    error: None,
+                }))
+            }
             Method::EditMessage { message_id, text } => {
                 let key = self.active_session_key().await?;
                 let path = self

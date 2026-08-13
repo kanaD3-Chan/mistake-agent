@@ -11,6 +11,9 @@ const saved = ref(false);
 const balance = ref(null);
 const balanceLoading = ref(false);
 const balanceError = ref("");
+const rules = ref(null);
+const rulesError = ref("");
+const rulesOpening = ref(false);
 
 const form = reactive({
   log_level: "info",
@@ -55,6 +58,33 @@ async function loadBalance() {
   }
 }
 
+const RULES_REASON_TEXT = {
+  missing: "文件缺失或不可读（首次启动应已自动生成，可点击下方按钮检查）",
+  too_large: "文件过大（超过 64KB 上限），已回退默认规则",
+  invalid_utf8: "文件编码异常（需保存为 UTF-8），已回退默认规则",
+};
+
+async function loadRulesStatus() {
+  rulesError.value = "";
+  try {
+    rules.value = await props.kernel.call("get_rules_status", {}, 10000);
+  } catch (e) {
+    rulesError.value = `读取规则状态失败：${e.message}`;
+  }
+}
+
+async function openRulesFile() {
+  rulesOpening.value = true;
+  rulesError.value = "";
+  try {
+    await props.kernel.openRulesFile();
+  } catch (e) {
+    rulesError.value = `打开规则文件失败：${e.message}`;
+  } finally {
+    rulesOpening.value = false;
+  }
+}
+
 async function save() {
   saving.value = true;
   error.value = "";
@@ -96,6 +126,7 @@ function money(symbol, currency) {
 onMounted(() => {
   load();
   loadBalance();
+  loadRulesStatus();
 });
 </script>
 
@@ -221,6 +252,39 @@ onMounted(() => {
             </label>
           </div>
           <small>开启后模型对话、判分、出题与复盘统一使用英文；界面文字保持中文。</small>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3><span class="section-icon"><Icon icon="mdi:file-document-edit-outline" width="18" /></span>教学规则（AGENTS.md）</h3>
+        <p v-if="rulesError" class="alert" role="alert">
+          <Icon icon="mdi:alert-circle-outline" width="18" />{{ rulesError }}
+        </p>
+        <template v-else-if="rules">
+          <p class="rules-status" :class="rules.loaded ? 'ok' : 'warn'">
+            <Icon
+              v-if="rules.loaded"
+              icon="mdi:check-circle-outline"
+              width="18"
+            />
+            <Icon v-else icon="mdi:alert-circle-outline" width="18" />
+            {{ rules.loaded ? "规则已加载：Agent 将按此文件辅导学生" : "规则未加载（已回退默认规则）" }}
+          </p>
+          <p v-if="!rules.loaded && rules.reason" class="rules-reason">
+            {{ RULES_REASON_TEXT[rules.reason] || `未知原因：${rules.reason}` }}
+          </p>
+          <p v-else-if="rules.loaded && rules.bytes" class="rules-reason">
+            当前规则 {{ rules.bytes }} 字节，保存后即时生效。
+          </p>
+          <p class="rules-path">{{ rules.path }}</p>
+          <button class="btn ghost" :disabled="rulesOpening" @click="openRulesFile">
+            <Icon icon="mdi:open-in-new" width="18" />
+            {{ rulesOpening ? "正在打开…" : "打开规则文件编辑" }}
+          </button>
+        </template>
+        <div v-else class="empty">
+          <Icon icon="mdi:loading" width="24" class="spin" />
+          <p>正在读取规则状态…</p>
         </div>
       </section>
 

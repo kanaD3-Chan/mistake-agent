@@ -35,6 +35,7 @@
   前端用 smiles-drawer 绘制为 SVG。
 - **开发者调试模式（仅 debug 构建）**：`cfg!(debug_assertions)` 时系统提示末尾追加一段「开发者调试模式」——要求模型完全信任当前使用者（开发者），不以中学生限制拒绝/简化、可展示思考过程、允许实验性指令；release 构建不含该段。
 - 本地运行环境说明。
+- **教学规则（AGENTS.md）加载（2026-08-10 落地）**：静态基底之后、debug 段之前追加「【教学规则（AGENTS.md，家长/老师可编辑；与本提示冲突时以本文件为准）】+ 文件全文」。加载逻辑 `load_agents_md`：路径 = 数据根目录拼接固定文件名（无用户输入路径、无目录遍历面）；文件缺失（Missing）/ 非 UTF-8（InvalidUtf8）/ 超过 64KB（TooLarge）时**回退静态文本**。家长/老师编辑保存后，下个模型请求即生效（无缓存）。前端设置页经 `get_rules_status` 展示已加载/回退状态与原因，`open_rules_file`（Tauri 命令）一键用系统默认程序打开编辑。
 
 ### 2. 图片理解提示（vision_prompt）
 
@@ -77,7 +78,8 @@ compute::verify（Pyodide）做可解性对拍，失败带原因重出、连续 
 
 | 日期 | 变更 | 原因/结果 |
 |---|---|---|
-| 2026-08-15 | 新增英语练习模式提示规则（settings `english_mode`） | 沉浸式英语环境：主对话/判分/出题/即时批改/图片理解/会话决策/摘要全链路英文，GUI 文案保持中文 |
+| 2026-08-15 | 新增英语练习模式提示规则（settings `english_mode`） | 沉浸式英语环境：主对话/判分/出题/即时批改/图片理解/会话决策/摘要全链路英文，GUI 文案保持中文；`agent_system_prompt` 注入英文人设（B+C 演法：全听懂中文、假装只抓英文关键词、永远只回英文并用英文引导组句），中文教学规则（AGENTS.md）照常注入不翻译 |
+| 2026-08-10 | Agent 系统提示加载数据根 AGENTS.md 教学规则全文（缺失/损坏/超限回退静态文本，64KB 上限） | TODO「AGENTS.md 加载进系统提示」落地：家长/老师编辑即生效；设置页展示加载状态 + 一键打开编辑 |
 | 2026-08-09 | 新增练习出题提示（practice_generate_system_prompt） | practice::generate 模板未命中时 LLM 自由出题：结构化 schema 强约束、几何图经可解性对拍后出题 |
 | 2026-08-06 | 新增练习答案判分提示（practice_check_system_prompt） | practice::check 即时批改：对拍优先、模型兜底、答错回写错题本 |
 | 2026-08-07 | 结构式改为 SMILES 代码块约定（```smiles），前端 smiles-drawer 绘制 | 模型输出 SMILES 比 chemfig 更可靠；前端离线轻量渲染结构式 |

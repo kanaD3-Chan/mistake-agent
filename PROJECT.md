@@ -201,6 +201,7 @@ mistake-agent/
 
 - **M1–M6 全部完成**（含 Windows 打包实测：`错题 Agent_0.1.0_x64-setup.exe` 在 Windows 环境安装运行通过），设计文档 43 条 ADR（0001–0043）+ 术语表（CONTEXT.md）。
 - **磁盘 IO 铁律 + 数据运行时化落地**（2026-08-10，ADR-0042）：`DomainIo`（数据根目录域内文件：域枚举 + canonicalize 兜底 + 原子写 + 审计）+ `TmpIo`（系统 temp 暂存：`mistake-agent-` 前缀白名单）+ `RelPath`（类型层无目录遍历，fail-closed）；memory 收编（中文路径 base64url 段编码经 DomainIo 落盘）；vision/grading 附件读写、practice 真题池全经 StorageHandle 语义方法（插件零文件句柄）；`data/` 子目录 + 真题池运行时化（`gaokao_pool.json` 文件优先、内置种子兜底，`read_pool_json` 真实链路测试）；verify_geometry.py 维持 include_str!（执行代码非数据）。
+- **指令加载落地**（2026-08-10）：数据根 `AGENTS.md`（教学规则，家长/老师可编辑）全文进主模型系统提示（静态基底之后、debug 段之前，`load_agents_md`，缺失/损坏/超限 64KB 回退静态文本，路径仅由数据根拼接固定文件名）；文件保存即生效（无缓存）；设置页「教学规则」卡片经 `get_rules_status` 展示加载状态 + `open_rules_file` 一键打开编辑。
 - kernel：注册表/两段式契约（用户插件 UserPlugin + 内核插件 KernelPlugin，ADR-0035）/dispatch/loop/RPC/session 调度全链路；四服务全部生产实现——storage（文件持久化：会话 JSONL/错题 JSON/审计 JSONL 轮转）、memory（文件持久化 + MemoryHandle 事件/审计）、model（Responses API + Chat Completions，LiveSettingsModelService 热更新）、compute（BridgeCompute → GUI Pyodide）。
 - 构建期插件自动发现（ADR-0036）：插件目录 `mod.rs` 即插件描述、`disabled` 标记即禁用（不编译不注册）；插件开发手册 + 参考模板（docs/plugin-dev/，复制即开工，include! 编译锚定测试保证与契约同步）。
 - **ADR-0037 剥离落地中**：M1（本仓库解耦）与 M2（本地独立 crate `so-lite-agent/`）已落地；M3 Provider 层（`register_provider` + 内置适配器）与 M4 插件手册/双插件验收已落地；M5（crates.io 发布与 mistake-agent 切换）待办，详见 [docs/plan/so-lite-agent.md](plan/so-lite-agent.md)。
@@ -213,10 +214,10 @@ mistake-agent/
 - 场景二 practice 智能出题全链路落地（2026-08-09，设计见 docs/variants.md）：确定性模板库 15 个初高中知识点（几何模板带 diagram_spec 与前端渲染器同源协议）+ 高考真题池（data/gaokao_pool.json include_str! 编译期嵌入，difficulty=exam 走池内抽取）+ LLM 自由出题（json_schema 强约束，模板未命中时）；LLM 生成的几何图经 compute::verify（verify_geometry.py）做存在性/自洽性对拍，失败注入 prompt 重出（连续 3 次停，执行端不可用降级放行）；practice::check 把练习记录落 memory（practice/history），generate 出题前读近 30 天已掌握集合避重复（prompt 注入避开清单 + 真题池过滤）。
 - 场景一真实链路复验通过（2026-08-04）：图片/文本 PDF → Qwen3-VL OCR → deepseek-v4-flash（Responses API json_schema）判分 → 错题归档；assistant 消息落盘与 usage 解析已修复并有 live_api 断言。
 - Tauri GUI 正式化（Vue 3 + Vite，按 ui-ux-pro-max 设计系统）：聊天/错题本/会话历史/设置四页 + **OOBE 首次引导**（test_connection 连通性自检）；思维链默认折叠、流式打字机、工具进度、停止、消息树编辑与分支切换、Pyodide 验算执行端（本地 WASM）、Iconify 图标、Markdown+KaTeX+DOMPurify 防 XSS、附件（图片/PDF 持久展示）、错题本搜索/排序。
-- 英语练习模式（2026-08-15，ADR-0043）：settings.json `english_mode` 开关，开启后主对话/判分/出题/即时批改/图片理解/会话决策/摘要全链路模型输出切英文，GUI 文案保持中文。
+- 英语练习模式（2026-08-15，ADR-0043）：settings.json `english_mode` 开关，开启后主对话/判分/出题/即时批改/图片理解/会话决策/摘要全链路模型输出切英文，GUI 文案保持中文；数据根 `AGENTS.md` 中文教学规则照常注入（不翻译），由静态层英文人设（B+C 演法：全听懂中文、假装只抓英文关键词、永远只回英文并用英文引导组句）保证输出全英文。
 - 设置页余额卡片（`check_balance` RPC）：DeepSeek `/user/balance` + SiliconFlow `/user/info` 真实查询，只读不落盘（ADR-0031）。
 - **Standalone**：kernel 内嵌 GUI 进程，mistake-agent 单二进制即可运行（sidecar 已彻底移除）。
-- 验收命令：`cd web && npm install && npm run fetch:pyodide && npm run build`；`cd web && npm run check:pyodide`；`cargo test`（142 项单元）；`cargo test --test live_api -- --ignored`（真实 API：hello 落盘+usage、三套样例、memory 往返、reasoning 回传回归 repro_reasoning、compute::verify 全链路）；`cargo run --bin mistake-agent`（GUI）。
+- 验收命令：`cd web && npm install && npm run fetch:pyodide && npm run build`；`cd web && npm run check:pyodide`；`cargo test`（149 项单元）；`cargo test --test live_api -- --ignored`（真实 API：hello 落盘+usage、三套样例、memory 往返、reasoning 回传回归 repro_reasoning、compute::verify 全链路）；`cargo run --bin mistake-agent`（GUI）。
 
 ## 10. 里程碑
 

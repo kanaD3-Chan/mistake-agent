@@ -214,3 +214,6 @@ _Avoid_: 直接把 chemfig 当 KaTeX 宏包引入（会静默渲染失败）、�
 
 **Runtime data（运行时数据）**:
 数据根目录 `data/` 下的教学数据文件（`data/gaokao_pool.json`、`data/point_deps.json` 等），bootstrap 启动时缺失即写默认种子（与 AGENTS.md 同款幂等），运行时可编辑、可被模型经 storage 句柄更新（生成即数据）；与编译期 include_str! 嵌入相对。_Avoid_: 静态资源、内置数据（暗示不可变）
+
+**Instruction loading（指令加载）**:
+数据根目录单文件 `AGENTS.md`（教学规则，家长/老师可编辑）全文注入主模型系统提示（静态基底之后、debug 段之前；`load_agents_md`）。文件缺失（Missing）/ 非 UTF-8（InvalidUtf8）/ 超 64KB（TooLarge）时回退静态基底；路径仅由数据根拼接固定文件名，无用户输入路径与遍历面；保存即生效（无缓存，每请求读取）。设置页经 `get_rules_status` 展示加载状态、`open_rules_file` 打开编辑。英文练习模式开启时，同一 AGENTS.md 中文教学规则照常注入，由静态层英文人设（B+C 演法：全听懂中文、假装只抓英文关键词、永远只回英文并用英文引导组句）保证输出全英文；不翻译、不生成独立英文规则文件。_Avoid_: 技能系统（v2 无技能，ADR-0012）、分层合并指令文件（ADR-0011 单文件）
