@@ -65,6 +65,7 @@ impl Default for AbortSignal {
     }
 }
 
+pub use crate::mistake::{Mistake, MistakeFilter, MistakeId, MistakePatch, MistakeStore};
 pub use compute::{ComputeError, ComputeHandle, ComputeRequest, ComputeResult, ComputeService};
 pub use memory::{MemoryError, MemoryHandle, MemoryPath, MemoryService, MemoryView};
 pub use model::{
@@ -72,8 +73,7 @@ pub use model::{
     ModelService, ModelStream, ResponseFormat, TokenUsage, ToolCallSpec, ToolChoice, ToolSchema,
 };
 pub use storage::{
-    Domain, DomainIo, Mistake, MistakeFilter, MistakeId, MistakePatch, MistakeStore, RelPath,
-    SessionStore, StorageError, StorageHandle, StorageService, TmpIo,
+    Domain, DomainIo, RelPath, SessionStore, StorageError, StorageHandle, StorageService, TmpIo,
 };
 
 // ---------- ServiceHandles：类型化封闭容器（Q5 修订） ----------

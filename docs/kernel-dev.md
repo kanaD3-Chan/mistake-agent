@@ -168,6 +168,7 @@ Caller
 - `DeadlineHandle`：只能在当前回合预算内延长工具截止时间；
 - `TurnControl`：请求内部中断；
 - `LoggerHandle`；
+- `english_mode`：英语练习模式开关，插件据此选择提示词语言；
 - `EventSink`：工具进度和 GUI 事件。
 
 工具执行默认串行。新增并发执行前必须先解决工具依赖拓扑、结果回填顺序和审计顺序问题。

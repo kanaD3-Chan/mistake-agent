@@ -16,7 +16,9 @@ use crate::kernel::message::{Message, MessageId, MessageKind, append_to_path};
 use crate::kernel::plugin::services::{
     ItemKind, ModelChunk, ModelKind, ModelRequest, ModelService, TokenUsage, ToolChoice,
 };
-use crate::kernel::prompt::agent_system_prompt;
+
+/// 系统提示提供者：人格/教学规则注入点，替代 loop 直接调用静态 prompt。
+pub type SystemPromptProvider = Arc<dyn Fn() -> String + Send + Sync>;
 
 mod turn;
 
@@ -60,6 +62,7 @@ pub struct AgentLoop {
     max_consecutive_failures: usize,
     summarizer: Arc<dyn Summarizer>,
     bus: InterruptBus,
+    system_prompt: SystemPromptProvider,
     /// 压缩阈值（按 token 粗估：字符数/2；达 75% 触发）。
     context_limit_tokens: usize,
     /// 压缩时保留的最近消息条数。
@@ -69,6 +72,7 @@ pub struct AgentLoop {
 }
 
 impl AgentLoop {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         model: Arc<dyn ModelService>,
         dispatch: Arc<Dispatch>,
@@ -76,6 +80,7 @@ impl AgentLoop {
         events: Arc<dyn EventSink>,
         summarizer: Arc<dyn Summarizer>,
         bus: InterruptBus,
+        system_prompt: SystemPromptProvider,
         switcher: Option<Arc<dyn SessionSwitch>>,
     ) -> Self {
         Self {
@@ -87,6 +92,7 @@ impl AgentLoop {
             max_consecutive_failures: 3,
             summarizer,
             bus,
+            system_prompt,
             context_limit_tokens: 131_072,
             compaction_keep_last: 15,
             switcher,
@@ -137,7 +143,7 @@ impl AgentLoop {
             }
 
             // 系统提示每次请求注入（不落消息树），保证无状态 API 拿到完整人格设定。
-            let mut req_messages = vec![Message::system(agent_system_prompt())];
+            let mut req_messages = vec![Message::system((self.system_prompt)())];
             req_messages.extend(conversation.iter().cloned());
             let mut request = ModelRequest {
                 model: ModelKind::Main,
@@ -525,7 +531,7 @@ fn interrupt_name(interrupt: &crate::kernel::agent::session::Interrupt) -> Strin
     match interrupt {
         crate::kernel::agent::session::Interrupt::SessionSwitched { .. } => "session_switched",
         crate::kernel::agent::session::Interrupt::GoalUpdated { .. } => "goal_updated",
-        crate::kernel::agent::session::Interrupt::SettingsChanged => "settings_changed",
+        crate::kernel::agent::session::Interrupt::ConfigChanged => "config_changed",
         crate::kernel::agent::session::Interrupt::MemoryChanged { .. } => "memory_changed",
         crate::kernel::agent::session::Interrupt::CompactionDone { .. } => "compaction_done",
     }

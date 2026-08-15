@@ -14,6 +14,7 @@ const balanceError = ref("");
 
 const form = reactive({
   log_level: "info",
+  english_mode: false,
   main: { api_url: "", model: "", transport: "responses", key_set: false, api_key: "" },
   vision: { api_url: "", model: "", transport: "", key_set: false, api_key: "" },
 });
@@ -24,6 +25,7 @@ async function load() {
   try {
     const v = await props.kernel.call("get_settings", {}, 10000);
     form.log_level = v.log_level || "info";
+    form.english_mode = Boolean(v.english_mode);
     form.main.api_url = v.main_model?.api_url || "";
     form.main.model = v.main_model?.model || "";
     form.main.transport = v.main_model?.transport || "responses";
@@ -59,6 +61,7 @@ async function save() {
   saved.value = false;
   const patch = {
     log_level: form.log_level,
+    english_mode: form.english_mode,
     main_model: {
       api_url: form.main.api_url.trim(),
       api_key: form.main.api_key,
@@ -209,6 +212,16 @@ onMounted(() => {
           </select>
           <small>级别越高输出越少；排障时用 DEBUG。</small>
         </label>
+        <div class="field toggle-field">
+          <div class="toggle-row">
+            <span>英语练习模式</span>
+            <label class="switch">
+              <input v-model="form.english_mode" type="checkbox" />
+              <span class="slider"></span>
+            </label>
+          </div>
+          <small>开启后模型对话、判分、出题与复盘统一使用英文；界面文字保持中文。</small>
+        </div>
       </section>
 
       <section class="card">

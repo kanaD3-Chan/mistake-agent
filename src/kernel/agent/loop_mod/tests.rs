@@ -62,6 +62,7 @@ fn setup_loop(
             events.clone(),
             Arc::new(StubSummarizer),
             bus,
+            Arc::new(|| "你是测试 Agent".to_string()),
             None,
         )
         .with_compaction_limits(context_limit, 2),
@@ -121,7 +122,7 @@ async fn below_threshold_skips_compaction() {
 #[tokio::test]
 async fn turn_boundary_consumes_interrupts_and_audits() {
     let bus = InterruptBus::new();
-    bus.send(Interrupt::SettingsChanged);
+    bus.send(Interrupt::ConfigChanged);
     bus.send(Interrupt::MemoryChanged {
         path: "数学/函数".into(),
     });
@@ -142,6 +143,6 @@ async fn turn_boundary_consumes_interrupts_and_audits() {
     assert_eq!(interrupts.len(), 2);
     assert!(records.iter().any(|r| matches!(
         r,
-        AuditRecord::Interrupt { name, .. } if name == "settings_changed"
+        AuditRecord::Interrupt { name, .. } if name == "config_changed"
     )));
 }

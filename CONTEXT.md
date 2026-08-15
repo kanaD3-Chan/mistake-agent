@@ -10,7 +10,7 @@
 _Avoid_: 核心、引擎（含义过宽）
 
 **Agent core（Agent 核心）**:
-可跨应用复用的通用 Agent 运行时：Agent loop、工具注册与调度、会话生命周期、模型运行时抽象与审计护栏；即 Kernel 剔除应用专属内核插件后余下的部分。计划以独立 crate `so-lite-agent` 提供，新 Agent 通过 `cargo add so-lite-agent` 复用，内核插件由使用方自行编写。
+可跨应用复用的通用 Agent 运行时：Agent loop、工具注册与调度、会话生命周期、模型运行时抽象与审计护栏；即 Kernel 剔除应用专属内核插件后余下的部分。以独立 crate `so-lite-agent` 提供（M1/M2 已落地：本仓库解耦 + `so-lite-agent/` 骨架；M3-M5 待办），新 Agent 通过 `cargo add so-lite-agent` 复用，内核插件由使用方自行编写。
 _Avoid_: 引擎、Agent 内核（与 Kernel 混用）
 
 **Kernel plugin（内核插件）**:
@@ -147,6 +147,10 @@ _Avoid_: 模型客户端、直接调 provider
 数据根目录 settings.json 的内容，由用户通过 App 设置界面独占写入，kernel 启动时读取；模型与插件没有任何配置访问通道。
 _Avoid_: 配置文件（实现细节）、系统设置
 
+**English immersion mode（英语练习模式）**:
+settings.json 的 `english_mode` 布尔开关（默认 false）；开启后主对话、判分、出题、即时批改、图片理解、会话决策与摘要等模型提示全部追加英文输出规则，GUI 界面文字保持中文。
+_Avoid_: 界面语言切换（只切模型输出语言）
+
 **Compute backend（验算执行端）**:
 compute 服务的实际执行位置（v2 为 GUI WebView 内的 Pyodide，经 Event::ComputeRequest / Method::ComputeResult 桥接，kernel 侧 BridgeCompute 等待回执并做超时/取消/审计）；Pyodide 即 WASM 沙箱。
 _Avoid_: 沙箱（专指隔离形态）
@@ -210,4 +214,3 @@ _Avoid_: 直接把 chemfig 当 KaTeX 宏包引入（会静默渲染失败）、�
 
 **Runtime data（运行时数据）**:
 数据根目录 `data/` 下的教学数据文件（`data/gaokao_pool.json`、`data/point_deps.json` 等），bootstrap 启动时缺失即写默认种子（与 AGENTS.md 同款幂等），运行时可编辑、可被模型经 storage 句柄更新（生成即数据）；与编译期 include_str! 嵌入相对。_Avoid_: 静态资源、内置数据（暗示不可变）
-

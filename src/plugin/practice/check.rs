@@ -71,6 +71,7 @@ pub async fn check_handler(
     model: ModelHandle,
     storage: StorageHandle,
     memory: MemoryHandle,
+    english_mode: bool,
     params: Value,
 ) -> Result<Value, ToolError> {
     let p: CheckParams =
@@ -91,11 +92,16 @@ pub async fn check_handler(
     if let Some(ref_text) = reference
         && exact_match(&p.student_answer, ref_text)
     {
-        return Ok(check_output(true, "exact_match", None, None, "参考答案对拍一致，作答正确。", false));
+        let analysis = if english_mode {
+            "The answer matches the reference answer and is correct."
+        } else {
+            "参考答案对拍一致，作答正确。"
+        };
+        return Ok(check_output(true, "exact_match", None, None, analysis, false));
     }
 
     // 第二步：模型判分（自由作答 / 数学等价等对拍覆盖不了的形态）。
-    let result = model_check(&model, &p).await?;
+    let result = model_check(&model, &p, english_mode).await?;
     let archived = if !result.correct {
         let mistake = Mistake {
             id: MistakeId(uuid::Uuid::new_v4()),
@@ -169,8 +175,12 @@ fn check_output(
     })
 }
 
-async fn model_check(model: &ModelHandle, p: &CheckParams) -> Result<CheckResult, ToolError> {
-    let system = Message::system(practice_check_system_prompt());
+async fn model_check(
+    model: &ModelHandle,
+    p: &CheckParams,
+    english_mode: bool,
+) -> Result<CheckResult, ToolError> {
+    let system = Message::system(practice_check_system_prompt(english_mode));
     let mut lines = vec![format!("题目：{}", p.question.trim())];
     lines.push(format!("学生作答：{}", p.student_answer.trim()));
     if let Some(r) = p.reference_answer.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
@@ -330,6 +340,7 @@ mod tests {
             model,
             storage,
             memory,
+            false,
             json!({
                 "question": "|-3| = ?",
                 "student_answer": " 3 ",
@@ -347,6 +358,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn check_exact_match_english_mode_returns_english() {
+        let store = Arc::new(FakeStore::default());
+        let (model, storage, memory) = handles(
+            r#"{"correct":false,"analysis":"不应走到模型判分"}"#,
+            store.clone(),
+        );
+        let out = check_handler(
+            model,
+            storage,
+            memory,
+            true,
+            json!({
+                "question": "The sun is bright.",
+                "student_answer": "sunny",
+                "reference_answer": "sunny",
+                "subject": "英语",
+                "knowledge_point": "词性转换",
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out["correct"], true);
+        assert_eq!(out["method"], "exact_match");
+        assert_eq!(
+            out["analysis"],
+            "The answer matches the reference answer and is correct."
+        );
+    }
+
+    #[tokio::test]
     async fn check_wrong_answer_goes_model_and_archives() {
         let store = Arc::new(FakeStore::default());
         let (model, storage, memory) = handles(
@@ -357,6 +398,7 @@ mod tests {
             model,
             storage,
             memory,
+            false,
             json!({
                 "question": "|-3| = ?",
                 "student_answer": "-3",
@@ -389,6 +431,7 @@ mod tests {
             model,
             storage,
             memory,
+            false,
             json!({
                 "question": "证明 △ABC ≅ △DEF",
                 "student_answer": "由 AB=DE、∠B=∠E、BC=EF，SAS 判定全等",
@@ -410,6 +453,7 @@ mod tests {
             model,
             storage,
             memory,
+            false,
             json!({ "question": "1+1=?", "student_answer": "" }),
         )
         .await
@@ -428,6 +472,7 @@ mod tests {
             model,
             storage,
             memory.clone(),
+            false,
             json!({
                 "question": "|-3| = ?",
                 "student_answer": "-3",

@@ -108,7 +108,8 @@ pub(crate) async fn upload_handler(
         serde_json::from_value(params).map_err(|e| ToolError::invalid_params(e.to_string()))?;
     // 先读图（vision::read_content：图片理解/PDF 抽文），不删文件；读完确认内容后判分，
     // 再经 StorageHandle 清理暂存副本（ADR-0042 磁盘 IO 铁律，插件不持有文件句柄）。
-    let content = read_content(&model, &storage, &p.file, &ctx.events, "grading::upload").await?;
+    let content =
+        read_content(&model, &storage, &p.file, &ctx.events, "grading::upload", ctx.english_mode).await?;
     storage
         .remove_staged(&p.file)
         .await
@@ -174,7 +175,7 @@ async fn grade_content(
     content: &str,
     ctx: &ToolCallContext,
 ) -> Result<String, ToolError> {
-    let system = Message::system(grading_system_prompt());
+    let system = Message::system(grading_system_prompt(ctx.english_mode));
     let user = Message::user(format!("作业 OCR 内容：\n{content}\n请逐题批改。"));
     let mut request = ModelRequest::chat(ModelKind::Main, vec![system, user]);
     // 内联扁平数组 schema：避免 $defs/$ref（DeepSeek json_schema 端不解析引用）。

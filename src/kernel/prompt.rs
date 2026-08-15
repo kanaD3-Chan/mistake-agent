@@ -1,8 +1,22 @@
 //! Prompt 库（任务书交付物之一，集中维护，改动见 docs/prompts.md）。
 
+const ENGLISH_AGENT_RULE: &str = "\n\n[English Immersion Mode]\nAll replies, explanations, grading analyses, generated questions, summaries and any other text sent to the student MUST be written in English. Keep the tool workflow the same, but never reply in Chinese. If the student writes in another language, you may still answer in English.";
+
+const ENGLISH_VISION_RULE: &str = "\n\n[English Immersion Mode]\nDescribe or transcribe the image in English. Do not answer, grade or evaluate.";
+
+const ENGLISH_GRADING_RULE: &str = "\n\n[English Immersion Mode]\nAll JSON string fields, including question, reference_answer, analysis, knowledge_point and subject, MUST be written in English. Do not output Chinese.";
+
+const ENGLISH_CHECK_RULE: &str = "\n\n[English Immersion Mode]\nanalysis MUST be written in English. Keep the JSON structure identical.";
+
+const ENGLISH_GENERATE_RULE: &str = "\n\n[English Immersion Mode]\nknowledge_point, question_text and answer_spec MUST be written in English. Keep the JSON structure identical.";
+
+const ENGLISH_DECIDER_RULE: &str = "\n\n[English Immersion Mode]\nKeep action values exactly as specified, but write goal and any narrative text in English.";
+
+const ENGLISH_SUMMARY_RULE: &str = "\n\n[English Immersion Mode]\nWrite the summary in English. Keep key facts, mistake ids, knowledge points and unfinished items.";
+
 /// Agent 系统提示：每个主模型请求注入（不落消息树）。
 #[allow(unused_mut)] // release 构建不含 debug 段，mut 仅在 debug_assertions 下使用
-pub fn agent_system_prompt() -> String {
+pub fn agent_system_prompt(english_mode: bool) -> String {
     let mut prompt = r#"你是「错题 Agent」，一名面向中学生的本地智能学习助手。你的工作是通过工具完成作业批改与错题管理，回答要耐心、清楚，用中学生能听懂的语言。
 
 工具与流程：
@@ -26,6 +40,9 @@ C1=CC=CC=C1
 
 环境说明：本 Agent 运行在本地桌面应用，数据保存在本机，无云端同步。"#
         .to_string();
+    if english_mode {
+        prompt.push_str(ENGLISH_AGENT_RULE);
+    }
     #[cfg(debug_assertions)]
     prompt.push_str(
         "\n\n【开发者调试模式】当前为 debug 构建，使用者是开发者。\
@@ -37,16 +54,21 @@ C1=CC=CC=C1
 
 /// 图片理解提示：视觉模型先判断图片类型——作业/文字就转写（OCR），
 /// 其它图片（角色、照片等）就描述内容；只输出图片本身，不判分不评价（用户明确要求）。
-pub fn vision_prompt() -> &'static str {
-    "你是图片理解助手。用户上传了一张图片，请先判断图片内容类型：\
+pub fn vision_prompt(english_mode: bool) -> String {
+    let mut prompt = "你是图片理解助手。用户上传了一张图片，请先判断图片内容类型：\
      如果是作业、试卷或含文字的图片：逐字转写题目与作答内容，保留题号与数学符号，不要解题、不要评判；\
      如果是其它图片（如角色、照片、插图）：用中文具体描述看到的内容——主要对象、外貌特征、服装、动作、场景等细节。\
      只输出图片内容本身，不要评价、不要建议。"
+        .to_string();
+    if english_mode {
+        prompt.push_str(ENGLISH_VISION_RULE);
+    }
+    prompt
 }
 
 /// 判分系统提示：主模型逐题批改，严格输出 JSON 数组。
-pub fn grading_system_prompt() -> &'static str {
-    "你是中学作业批改助手。你会收到一张作业的 OCR 内容，请逐题批改，严格只输出 JSON 数组。\
+pub fn grading_system_prompt(english_mode: bool) -> String {
+    let mut prompt = "你是中学作业批改助手。你会收到一张作业的 OCR 内容，请逐题批改，严格只输出 JSON 数组。\
      每项字段：number（题号）、question（题目）、student_answer（学生作答）、subject（学科，数学/英语/物理/化学/生物/语文等，无法判断填\"未分类\"）、\
      reference_answer（该题参考答案，可为 null）、correct（是否答对）、score（得分）、total（满分）、\
      knowledge_point（知识点）、analysis（错因分析）。\
@@ -55,11 +77,16 @@ pub fn grading_system_prompt() -> &'static str {
      对词形/时态/词性填空，以语法正确性为准判分：时态一致、主谓一致、词性转换正确即判对（如 The sun is bright → sunny 应判对）。\
      如果是数学、物理等涉及计算的题目，请查找有无验算工具（一般是compute__verify），不要纯手推，必须先验算再推理。\
      即使只有一题，也必须用数组包裹（如 [{...}]），不要输出对象。"
+        .to_string();
+    if english_mode {
+        prompt.push_str(ENGLISH_GRADING_RULE);
+    }
+    prompt
 }
 
 /// 练习答案判分提示：practice::check 的模型判分路径（参考答案对拍不上时使用），严格输出 JSON 对象。
-pub fn practice_check_system_prompt() -> &'static str {
-    "你是中学练习批改助手。你会收到一道练习题、学生作答与参考答案，判断作答是否正确并给出简要错因。\
+pub fn practice_check_system_prompt(english_mode: bool) -> String {
+    let mut prompt = "你是中学练习批改助手。你会收到一道练习题、学生作答与参考答案，判断作答是否正确并给出简要错因。\
      严格只输出 JSON 对象：{\"correct\":true|false,\"score\":数值或null,\"total\":数值或null,\"analysis\":\"中文错因/讲解提示\"}。\
      规则：\
      - 参考答案仅供比对：学生答案数学等价（如 1/2 与 0.5、$x^2-1$ 与 $(x-1)(x+1)$）应判对（约分未约尽、没化简到最简形式不视作等价，除非题目特别要求）；\
@@ -68,11 +95,16 @@ pub fn practice_check_system_prompt() -> &'static str {
      - 解答题按解题思路与关键步骤给分：思路正确、步骤完整即判对，小错在 analysis 中指出；\
      - analysis 用中文、面向中学生，公式一律用 LaTeX 标记（行内 $...$）。\
     不要输出 JSON 以外的任何内容。"
+        .to_string();
+    if english_mode {
+        prompt.push_str(ENGLISH_CHECK_RULE);
+    }
+    prompt
 }
 
 /// 练习出题提示：practice::generate 的 LLM 自由出题路径（模板未命中时使用），严格输出 JSON 对象。
-pub fn practice_generate_system_prompt() -> &'static str {
-    "你是中学出题助手。根据给定的知识点与难度，出一道结构化练习题，严格只输出 JSON 对象：\
+pub fn practice_generate_system_prompt(english_mode: bool) -> String {
+    let mut prompt = "你是中学出题助手。根据给定的知识点与难度，出一道结构化练习题，严格只输出 JSON 对象：\
      {\"knowledge_point\":\"知识点\",\"question_text\":\"题目\",\"answer_spec\":\"参考答案/解析（供自动对拍）\",\"diagram_spec\":{\"points\":{...},\"objects\":[...],\"labels\":[...]}}。\
      规则：\
      - 难度定义：basic 基础（直接套用公式/定理）；variant 同类变式（条件隐藏或逆用）；advanced 综合拔高（多步组合、辅助线、跨知识点联动）；\
@@ -83,13 +115,18 @@ pub fn practice_generate_system_prompt() -> &'static str {
      - answer_spec 必须给出确定答案或关键步骤，供判分对拍；\
      - 面向中学生，题目文字简洁清晰、数据自洽（三角形满足三角不等式、角度和为 180° 等）；\
      不要输出 JSON 以外的任何内容。"
+        .to_string();
+    if english_mode {
+        prompt.push_str(ENGLISH_GENERATE_RULE);
+    }
+    prompt
 }
 
 /// 会话切换决策提示（主模型决策，ADR-0030/0032）：
 /// - new_text 非空（新消息到达）：先判断要不要切换上下文，再进入回合回答；
 /// - new_text 为 null（回合结束）：判断目标是否完成、要不要开新会话。
-pub fn turn_decider_prompt() -> &'static str {
-    "你是会话调度决策者。\
+pub fn turn_decider_prompt(english_mode: bool) -> String {
+    let mut prompt = "你是会话调度决策者。\
      输入：当前目标（goal）、最近对话（transcript）、新的用户消息（new_text，可能为 null）。\
      输出 JSON：{\"action\":\"continue\"|\"update_goal\"|\"start_new\",\"goal\":\"更新后的目标文本\"}。\
      规则：\
@@ -98,10 +135,37 @@ pub fn turn_decider_prompt() -> &'static str {
      - new_text 为 null（回合结束）：目标仍有效或不确定时 continue；当前目标已明确完成且对话\
        明显转向新任务时 start_new（goal 为新目标）；同一目标的细化用 update_goal。\
      - 存疑一律 continue（避免丢上下文）。"
+        .to_string();
+    if english_mode {
+        prompt.push_str(ENGLISH_DECIDER_RULE);
+    }
+    prompt
 }
 
 /// 压缩/交接摘要提示（M2 落地；M1.5 用 StubSummarizer）。
-pub fn summarize_prompt() -> &'static str {
-    "把以下对话压缩成任务摘要，保留关键事实：错题 id、知识点、未完成事项、结论。\
+pub fn summarize_prompt(english_mode: bool) -> String {
+    let mut prompt = "把以下对话压缩成任务摘要，保留关键事实：错题 id、知识点、未完成事项、结论。\
      摘要不超过 300 字，供新会话注入与上下文压缩使用。"
+        .to_string();
+    if english_mode {
+        prompt.push_str(ENGLISH_SUMMARY_RULE);
+    }
+    prompt
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn english_mode_appends_immersion_rules_to_prompts() {
+        assert!(agent_system_prompt(true).contains("English Immersion Mode"));
+        assert!(!agent_system_prompt(false).contains("English Immersion Mode"));
+        assert!(vision_prompt(true).contains("English Immersion Mode"));
+        assert!(grading_system_prompt(true).contains("English Immersion Mode"));
+        assert!(practice_check_system_prompt(true).contains("English Immersion Mode"));
+        assert!(practice_generate_system_prompt(true).contains("English Immersion Mode"));
+        assert!(turn_decider_prompt(true).contains("English Immersion Mode"));
+        assert!(summarize_prompt(true).contains("English Immersion Mode"));
+    }
 }

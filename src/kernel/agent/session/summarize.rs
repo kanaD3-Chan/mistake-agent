@@ -55,6 +55,7 @@ pub(crate) fn message_text(msg: &Message) -> String {
 /// 生产摘要器：LLM 生成 ≤300 字任务摘要；模型失败降级为 stub 式摘要。
 pub struct LlmSummarizer {
     model: Arc<dyn ModelService>,
+    settings: Option<Arc<std::sync::RwLock<crate::kernel::settings::Settings>>>,
     timeout: Duration,
     max_input_chars: usize,
     /// 消息数少于该值时直接走 stub 摘要，不调 LLM（短会话无需生成式摘要）。
@@ -67,6 +68,7 @@ impl LlmSummarizer {
     pub fn new(model: Arc<dyn ModelService>) -> Self {
         Self {
             model,
+            settings: None,
             timeout: Duration::from_secs(60),
             max_input_chars: 12000,
             min_messages_for_llm: 8,
@@ -79,6 +81,21 @@ impl LlmSummarizer {
         self.retries = retries;
         self.retry_delay = delay;
         self
+    }
+
+    pub fn with_settings(
+        mut self,
+        settings: Arc<std::sync::RwLock<crate::kernel::settings::Settings>>,
+    ) -> Self {
+        self.settings = Some(settings);
+        self
+    }
+
+    fn english_mode(&self) -> bool {
+        self.settings
+            .as_ref()
+            .map(|s| s.read().map(|x| x.english_mode).unwrap_or(false))
+            .unwrap_or(false)
     }
 
     fn fallback(messages: &[Message], goal: Option<&Goal>) -> String {
@@ -115,7 +132,7 @@ impl Summarizer for LlmSummarizer {
         let request = ModelRequest {
             model: ModelKind::Main,
             messages: vec![
-                Message::system(summarize_prompt()),
+                Message::system(summarize_prompt(self.english_mode())),
                 Message::user(format!("目标：{goal_text}\n\n对话：\n{transcript}")),
             ],
             tools: None,

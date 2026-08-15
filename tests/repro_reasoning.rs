@@ -26,7 +26,7 @@ async fn replay_real_session_history() {
     let frame = kernel
         .handle(RpcRequest {
             id: 1,
-            method: Method::ListTools,
+            method: Method::ListTools.into(),
         })
         .await
         .expect("list_tools 失败")

@@ -1,6 +1,6 @@
 # 后续计划：Agent core 剥离为 `so-lite-agent` crate
 
-> 状态：计划（不落地）。决策记录见 [ADR-0037](../adr/0037-so-lite-agent-crate-extraction.md)。
+> 状态：M1-M4 已落地（2026-08-11），M5 待办。决策记录见 [ADR-0037](../adr/0037-so-lite-agent-crate-extraction.md)。
 
 ## 目标
 
@@ -20,6 +20,7 @@
 ## 仓库形态
 
 - **新独立仓库承载 crate** `so-lite-agent`（单 crate，`cargo add` 即用；Pi 式分层体现在模块边界，不拆多 crate）。
+- M2 已在本仓库创建本地独立 crate 目录 `so-lite-agent/` 作为脚手架（不参与本仓库 build.rs 插件发现）；正式迁到独立仓库后，本目录可作为源。
 - mistake-agent 本仓库保持现状，新仓库发布后（或开发期经 path/git 依赖）作为消费方与参考实现。
 - 插件开发手册与参考模板（`docs/plugin-dev/`）最终随新仓库走——使用方写内核/用户插件时以它们为教材。
 
@@ -60,14 +61,14 @@ let kernel = KernelBuilder::new()
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| M1 | 本仓库解耦准备（上表清单） | 行为不变，121 单测 + live_api 全绿 |
-| M2 | 新仓库骨架：搬通用模块 + 默认服务 | `cargo add` 后十行代码跑通 hello 回合（mock 模型） |
-| M3 | Provider 层：内置适配器 + register_provider | DeepSeek 真实 API 回合通过 |
-| M4 | 通用 RPC + KernelBuilder 定型；插件手册/参考模板迁移到新仓库 | 使用方按手册写一个内核插件 + 一个用户插件并注册跑通 |
-| M5 | 发布 crates.io（0.x）；mistake-agent 切到新 crate 消费，删除本仓库重复代码 | 双端回归通过 |
+| M1 | 本仓库解耦准备（上表清单） | ✅ 已落地：行为不变，123 单测 + clippy -D warnings 全绿（live_api 为 ignored，未跑真实 API） |
+| M2 | 新仓库骨架：搬通用模块 + 默认服务 | ✅ 已落地：`so-lite-agent/` 独立 crate，`cargo test` 1 个集成测试 + `cargo run --example hello` 跑通 mock 回合 |
+| M3 | Provider 层：内置适配器 + register_provider | ✅ 已落地：`register_provider()` + `openai/responses/anthropic` 适配器；本地 SSE 测试通过；真实 API 测试为 ignored（需 `SO_LITE_API_*`） |
+| M4 | 通用 RPC + KernelBuilder 定型；插件手册/参考模板迁移到新仓库 | ✅ 已落地：插件手册随 crate（`so-lite-agent/docs/plugin-dev/`）；内核 + 用户插件双注册跑通测试 |
+| M5 | 发布 crates.io（0.x）；mistake-agent 切到新 crate 消费，删除本仓库重复代码 | ⏳ 待办：`cargo package` 已通过；crates.io 上传需网络/凭据，mistake-agent 切换是大手术，需单独排期 |
 
 ## 风险与约定
 
 - 大手术回归：每阶段保持 mistake-agent 行为不变，靠现有单测 + 真实 API 回归兜底。
 - crate API 未定型前不发布 1.0（0.x 语义化版本）。
-- 本仓库 AGENTS.md「单 crate 不拆分」红线在 M1 落地时同步修订（由 ADR-0037 supersede）。
+- 本仓库 AGENTS.md「单 crate 不拆分」红线已在 M1 落地时同步修订（由 ADR-0037 supersede，mistake-agent 本体在 M5 前仍保持单 crate，`so-lite-agent/` 是 ADR-0037 允许的独立 crate 骨架）。

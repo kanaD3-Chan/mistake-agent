@@ -74,6 +74,7 @@ impl GuardModel for StubGuard {
 /// 回合结束经本决策器判断；模型错误 / 输出无法解析 / 超时一律降级 Continue（存疑即继续）。
 pub struct LlmTurnDecider {
     model: Arc<dyn ModelService>,
+    settings: Option<Arc<std::sync::RwLock<crate::kernel::settings::Settings>>>,
     timeout: Duration,
     retries: usize,
     retry_delay: Duration,
@@ -84,6 +85,7 @@ impl LlmTurnDecider {
     pub fn new(model: Arc<dyn ModelService>) -> Self {
         Self {
             model,
+            settings: None,
             timeout: Duration::from_secs(60),
             retries: 2,
             retry_delay: Duration::from_secs(2),
@@ -96,6 +98,21 @@ impl LlmTurnDecider {
         self.retries = retries;
         self.retry_delay = delay;
         self
+    }
+
+    pub fn with_settings(
+        mut self,
+        settings: Arc<std::sync::RwLock<crate::kernel::settings::Settings>>,
+    ) -> Self {
+        self.settings = Some(settings);
+        self
+    }
+
+    fn english_mode(&self) -> bool {
+        self.settings
+            .as_ref()
+            .map(|s| s.read().map(|x| x.english_mode).unwrap_or(false))
+            .unwrap_or(false)
     }
 }
 
@@ -184,7 +201,7 @@ impl GuardModel for LlmTurnDecider {
         let request = ModelRequest {
             model: ModelKind::Main,
             messages: vec![
-                Message::system(turn_decider_prompt()),
+                Message::system(turn_decider_prompt(self.english_mode())),
                 Message::user(serde_json::to_string(&payload).unwrap_or_default()),
             ],
             tools: None,

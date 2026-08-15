@@ -10,6 +10,7 @@
 - **连续对话历史**：聊天记录是从第一次使用到现在的完整消息树（会话切换无感知、旧消息自动携带），支持编辑/重新生成与分支切换。
 - **跨会话记忆**：`memory::save/show/remove` 文件持久化，重启不丢。
 - **Python 验算**：`compute::verify` 在应用内 Pyodide（WASM 沙箱）执行。
+- **英语练习模式**：设置页开启后，对话、判分、出题与复盘全部以英文输出，界面文字保持中文。
 - **安全与鲁棒**：文件只经系统临时目录暂存、kernel 不读任意本地路径；守卫/摘要/回合对瞬时错误自动重试；审计默认全覆盖、日志脱敏。
 
 ## 插件开发
@@ -43,6 +44,7 @@ Kernel（agent loop · 工具注册与调度 · 会话调度（主模型决策�
 ```json
 {
   "log_level": "info",
+  "english_mode": false,
   "main_model": {
     "api_url": "https://api.deepseek.com",
     "api_key": "你的 DeepSeek key",
@@ -149,7 +151,7 @@ cd web && node scripts/katex-check.mjs      # LaTeX 渲染链路自检
 - [docs/kernel-dev.md](docs/kernel-dev.md) — Kernel 生命周期、模块职责与扩展边界
 - [docs/api.md](docs/api.md) — GUI ↔ kernel RPC 协议与真实模型对接
 - [docs/build.md](docs/build.md) — 构建流程与 Pyodide 离线包步骤
-- [docs/adr/](docs/adr/) — 架构决策记录（42 条）
+- [docs/adr/](docs/adr/) — 架构决策记录（43 条）
 - [docs/plan/so-lite-agent.md](docs/plan/so-lite-agent.md) — Agent core 剥离后续计划（ADR-0037，未落地）
 - [docs/prompts.md](docs/prompts.md) / [docs/testing.md](docs/testing.md) / [docs/usage.md](docs/usage.md) — Prompt、测试与使用记录
 - [docs/variants.md](docs/variants.md) — 变式出题设计（场景二，已按设计落地）

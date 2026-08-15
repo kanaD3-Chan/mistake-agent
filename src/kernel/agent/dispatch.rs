@@ -30,6 +30,7 @@ pub type ToolHandler = Arc<
 pub type CommandHandler = ToolHandler;
 pub type EventHandler =
     Arc<dyn Fn(Value) -> BoxFuture<'static, Result<(), ToolError>> + Send + Sync>;
+pub type EnglishModeProvider = Arc<dyn Fn() -> bool + Send + Sync>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -83,6 +84,8 @@ pub struct ToolCallContext {
     pub deadline: DeadlineHandle,
     pub interrupt: TurnControl,
     pub logger: LoggerHandle,
+    /// 英语沉浸模式开关：插件据此选择提示词语言。
+    pub english_mode: bool,
     /// 进度播报通道（ToolProgress 等）。
     pub events: Arc<dyn EventSink>,
 }
@@ -94,6 +97,7 @@ pub struct Dispatch {
     grace: Duration,
     turn_budget: Duration,
     events: Arc<dyn EventSink>,
+    english_mode: EnglishModeProvider,
 }
 
 impl Dispatch {
@@ -112,7 +116,13 @@ impl Dispatch {
             grace,
             turn_budget,
             events,
+            english_mode: Arc::new(|| false),
         }
+    }
+
+    pub fn with_english_mode(mut self, provider: EnglishModeProvider) -> Self {
+        self.english_mode = provider;
+        self
     }
 
     pub async fn call_tool(
@@ -226,6 +236,7 @@ impl Dispatch {
                 reason: reason.clone(),
             },
             logger: self.registry.logger().clone(),
+            english_mode: (self.english_mode)(),
             events: self.events.clone(),
         };
         let task: JoinHandle<Result<Value, ToolError>> =

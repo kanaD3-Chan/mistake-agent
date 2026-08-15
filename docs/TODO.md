@@ -50,18 +50,27 @@
 - [ ] **Agent 流程图**：任务书交付物要求"源代码仓库（含 Agent 流程图、Prompt 库）"——Prompt 库已有（docs/prompts.md），缺 agent 工作流图（工具调度/会话切换/重测循环的流程图，答辩文档用）。
 
 
-## Agent core 剥离为 so-lite-agent（计划，未落地）
+## Agent core 剥离为 so-lite-agent（M1-M4 已落地，M5 未落地）
 
-把通用 Agent 运行时（loop/工具注册/会话/模型 Provider 抽象/通用 RPC）剥离为独立 crate `so-lite-agent`，开箱即用（`cargo add` 即可开发新 Agent），内核/用户插件由使用方编写。完整计划见 [docs/plan/so-lite-agent.md](plan/so-lite-agent.md)，决策见 [ADR-0037](adr/0037-so-lite-agent-crate-extraction.md)。当前只做计划，不落地。
+把通用 Agent 运行时（loop/工具注册/会话/模型 Provider 抽象/通用 RPC）剥离为独立 crate `so-lite-agent`，开箱即用（`cargo add` 即可开发新 Agent），内核/用户插件由使用方编写。完整计划见 [docs/plan/so-lite-agent.md](plan/so-lite-agent.md)，决策见 [ADR-0037](adr/0037-so-lite-agent-crate-extraction.md)。当前 M1-M4 已落地，M5 待办。
 
-## 近期：英语练习模式（规划，未落地）
+已落地：
+- M1 本仓库解耦（行为不变）：`system_prompt` 注入、`Interrupt::ConfigChanged`、错题领域类型移到 `src/mistake.rs`、RPC 通用子集 + `custom` 兜底 + `RpcExtension` + `KernelBuilder`。
+- M2 本地独立 crate 骨架 `so-lite-agent/`：通用 registry/dispatch/loop/会话存储/RPC + `InMemorySessionStore` + `MockModelService`，`cargo run --example hello` 跑通 mock 回合。
+- M3 Provider 层：`register_provider()` + `openai/responses/anthropic` 适配器，本地 SSE 测试通过，真实 API 测试 ignored。
+- M4 插件手册/参考模板随 crate（`so-lite-agent/docs/plugin-dev/`），内核 + 用户插件双注册跑通测试。
+
+未落地：
+- M5 发布 crates.io（0.x），mistake-agent 切换到新 crate 消费并删除重复代码。
+
+## 近期：英语练习模式（已落地）
 
 沉浸式英语环境：开启后整个对话环境切全英文，含模型输出。
 
-- settings.json 加 `english_mode: bool`（用户独占写，默认 false；设置页开关）。
-- 启动/热更新时生效：`agent_system_prompt()`（[src/kernel/prompt.rs](../src/kernel/prompt.rs)）在 english_mode 下替换为英文版系统提示（或追加强指令"All replies must be in English"），全链路模型输出（含判分/出题/复盘）随主系统提示走英文。
-- 范围决策：判定模型指令（判分、摘要等）是否也切英文——倾向跟随（同一沉浸语境）；GUI 界面文字暂不切（只切模型对话侧，UI 留中文更安全）。
-- 提示词让模型在 english_mode 下判分/讲解也用英文（练习 + 答题一体）。
+- [x] settings.json 加 `english_mode: bool`（用户独占写，默认 false；设置页开关）。
+- [x] 启动/热更新时生效：`agent_system_prompt()`（[src/kernel/prompt.rs](../src/kernel/prompt.rs)）在 english_mode 下替换为英文版系统提示（或追加强指令"All replies must be in English"），全链路模型输出（含判分/出题/复盘）随主系统提示走英文。
+- [x] 范围决策：判定模型指令（判分、摘要等）是否也切英文——倾向跟随（同一沉浸语境）；GUI 界面文字暂不切（只切模型对话侧，UI 留中文更安全）。
+- [x] 提示词让模型在 english_mode 下判分/讲解也用英文（练习 + 答题一体）。
 
 ## 近期：桌面输入方式增强（规划，未落地）
 

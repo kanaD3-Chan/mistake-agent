@@ -15,7 +15,7 @@ pub enum Interrupt {
     GoalUpdated {
         goal: Goal,
     },
-    SettingsChanged,
+    ConfigChanged,
     MemoryChanged {
         path: String,
     },

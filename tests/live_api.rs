@@ -7,7 +7,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use mistake_agent::kernel::agent::dispatch::Caller;
-use mistake_agent::kernel::agent::rpc::{ForcedToolRequest, Kernel, Method, RpcRequest};
+use mistake_agent::kernel::agent::rpc::{
+    ForcedToolRequest, Kernel, Method, RpcRequest, WireMethod,
+};
 use mistake_agent::kernel::agent::session::SessionKey;
 use mistake_agent::kernel::events::{Event, MemoryEventSink};
 use mistake_agent::kernel::settings::Settings;
@@ -33,7 +35,7 @@ async fn wait_idle(kernel: &Arc<Kernel>, timeout: Duration) -> bool {
     loop {
         let req = RpcRequest {
             id: 999,
-            method: Method::GetState,
+            method: Method::GetState.into(),
         };
         if let Ok(Some(frame)) = kernel.handle(req).await {
             let s = serde_json::to_string(&frame).unwrap_or_default();
@@ -65,7 +67,8 @@ async fn hello_turn_real_api() {
             force_tool: None,
             file: vec![],
             asset: vec![],
-        },
+        }
+        .into(),
     };
     let frame = kernel.handle(req).await.expect("请求失败");
     assert!(
@@ -133,10 +136,7 @@ async fn hello_turn_real_api() {
 
     // 聊天上下文缓存命中统计：回合 usage 应已按会话累计（真实 API 返回 cached_tokens）。
     let stats_frame = kernel
-        .handle(RpcRequest {
-            id: 2,
-            method: Method::GetCacheStats,
-        })
+        .handle(RpcRequest::custom(2, "get_cache_stats", json!({})))
         .await
         .expect("get_cache_stats 请求失败")
         .expect("应有响应帧");
@@ -256,7 +256,8 @@ async fn forced_tool_call_real_api() {
             }),
             file: vec![],
             asset: vec![],
-        },
+        }
+        .into(),
     };
     let frame = kernel.handle(req).await.expect("请求失败");
     assert!(
@@ -308,7 +309,8 @@ async fn latex_output_real_api() {
             force_tool: None,
             file: vec![],
             asset: vec![],
-        },
+        }
+        .into(),
     };
     let frame = kernel.handle(req).await.expect("请求失败");
     assert!(
@@ -436,7 +438,7 @@ async fn check_balance_real_api() {
     let kernel = Kernel::new(events.clone()).await.expect("kernel 启动失败");
     let req = RpcRequest {
         id: 10,
-        method: Method::CheckBalance,
+        method: WireMethod::custom("check_balance", json!({})),
     };
     let frame = kernel
         .handle(req)
@@ -497,7 +499,8 @@ async fn pre_turn_context_decision_real_api() {
             force_tool: None,
             file: vec![],
             asset: vec![],
-        },
+        }
+        .into(),
     };
     kernel
         .handle(send(20, "帮我看看这道题"))
@@ -518,10 +521,7 @@ async fn pre_turn_context_decision_real_api() {
     );
 
     let stats_frame = kernel
-        .handle(RpcRequest {
-            id: 22,
-            method: Method::GetCacheStats,
-        })
+        .handle(RpcRequest::custom(22, "get_cache_stats", json!({})))
         .await
         .expect("get_cache_stats 请求失败")
         .expect("应有响应帧");
@@ -561,14 +561,18 @@ async fn switch_tool_call_not_polluting_next_context() {
             force_tool,
             file: vec![],
             asset: vec![],
-        },
+        }
+        .into(),
     };
-    let rpc = |id: u64, method: Method| RpcRequest { id, method };
+    let rpc = |id: u64, method: Method| RpcRequest {
+        id,
+        method: method.into(),
+    };
     async fn session_count(kernel: &Arc<Kernel>) -> usize {
         let frame = kernel
             .handle(RpcRequest {
                 id: 99,
-                method: Method::ListSessions,
+                method: Method::ListSessions.into(),
             })
             .await
             .expect("list_sessions 失败")
@@ -703,7 +707,8 @@ async fn compute_verify_roundtrip_real_api() {
             }),
             file: vec![],
             asset: vec![],
-        },
+        }
+        .into(),
     };
     let frame = kernel.handle(req).await.expect("请求失败");
     assert!(
@@ -724,15 +729,16 @@ async fn compute_verify_roundtrip_real_api() {
         }) {
             assert!(!code.trim().is_empty(), "模型生成的验算代码不应为空");
             kernel
-                .handle(RpcRequest {
-                    id: 900,
-                    method: Method::ComputeResult {
-                        id,
-                        stdout: "323".into(),
-                        stderr: String::new(),
-                        duration_ms: 5,
-                    },
-                })
+                .handle(RpcRequest::custom(
+                    900,
+                    "compute_result",
+                    json!({
+                        "compute_id": id,
+                        "stdout": "323",
+                        "stderr": "",
+                        "duration_ms": 5,
+                    }),
+                ))
                 .await
                 .expect("compute_result 回执失败");
             delivered = true;

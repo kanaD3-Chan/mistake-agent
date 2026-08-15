@@ -54,6 +54,8 @@ pub fn descriptor() -> PluginDescriptor {
 Arc::new(|call_ctx: &ToolCallContext, params: Value| Box::pin(async move { ... }))
 ```
 
+`call_ctx.english_mode` 提供英语练习模式开关；插件需要生成模型提示时应据此选择语言（ADR-0043）。
+
 ## 4. 服务句柄（能力边界）
 
 | 句柄 | 可见能力 | 用途示例 |

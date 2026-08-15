@@ -36,8 +36,8 @@
 | `get_state` | — | ✅ M1 | 返回 `{status: idle\|busy, session_key}` |
 | `edit_message` | `message_id`, `text` | ✅ M5 | 消息树编辑：仅 user 消息可编辑，从被编辑消息的父节点派生新分支，返回 `{session_key, messages}`（新活跃路径）；编辑 = 改完重发，保存后自动开启新一轮回答 |
 | `switch_branch` | `message_id` | ✅ M5 | 消息树切分支：设置 active_path，返回 `{session_key, messages}` |
-| `get_settings` | — | ✅ M2/M5 | 返回设置公开视图（**不含 api_key**，只含 `key_set` 标记） |
-| `set_settings` | `patch` | ✅ M2/M5 | 应用设置补丁并持久化；模型配置变化时热替换双模型服务；成功后发 `settings_changed` 事件 |
+| `get_settings` | — | ✅ M2/M5 | 返回设置公开视图（**不含 api_key**，只含 `key_set` 标记；含 `english_mode`） |
+| `set_settings` | `patch` | ✅ M2/M5 | 应用设置补丁并持久化（含 `english_mode`）；模型配置变化时热替换双模型服务；成功后发 `settings_changed` 事件 |
 | `list_sessions` | — | ✅ M5 | 返回 `{sessions:[{key,goal,status,created_at,last_activity_at}]}` |
 | `read_session` | `key` | ✅ M5 | 返回 `{meta,messages}`（会话历史/消息树完整记录） |
 | `compute_result` | `compute_id`, `stdout`, `stderr`, `duration_ms` | ✅ M4 | GUI/Pyodide 验算回执（compute 桥接）；`compute_id` 必须回填事件 `compute_request` 的 id |
@@ -163,6 +163,7 @@ pub trait UserPlugin {
 ```json
 {
   "log_level": "info",
+  "english_mode": false,
   "main_model": { "api_url": "https://api.deepseek.com", "api_key": "...", "model": "deepseek-v4-flash", "transport": "responses" },
   "vision_model": { "api_url": "https://api.siliconflow.cn/v1", "api_key": "...", "model": "Qwen/Qwen3-VL-32B-Instruct" }
 }
@@ -190,7 +191,7 @@ pub trait UserPlugin {
 
 ```bash
 cd web && npm install && npm run build    # 前端构建（改过 web/ 后必须执行）
-cargo test                                 # 单元测试（137 项）
+cargo test                                 # 单元测试（142 项）
 cargo test --test live_api -- --ignored   # 真实 API 验收：hello + samples/ 三套样例
 cargo run --bin mistake-agent             # Tauri GUI（Wayland/X11 均可）
 ```

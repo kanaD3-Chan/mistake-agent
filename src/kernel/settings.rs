@@ -32,6 +32,7 @@ pub struct ModelConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SettingsPatch {
     pub log_level: Option<Level>,
+    pub english_mode: Option<bool>,
     pub main_model: Option<ModelConfigPatch>,
     pub vision_model: Option<ModelConfigPatch>,
 }
@@ -49,6 +50,8 @@ pub struct ModelConfigPatch {
 pub struct Settings {
     #[serde(default = "default_log_level")]
     pub log_level: Level,
+    #[serde(default)]
+    pub english_mode: bool,
     pub main_model: ModelConfig,
     pub vision_model: ModelConfig,
 }
@@ -77,6 +80,7 @@ impl Settings {
         let Ok(main_key) = env::var("DEEPSEEK_API_KEY") else {
             return Ok(Self {
                 log_level: default_log_level(),
+                english_mode: false,
                 main_model: ModelConfig {
                     api_url: "https://api.deepseek.com".into(),
                     api_key: String::new(),
@@ -105,6 +109,7 @@ impl Settings {
         };
         Ok(Self {
             log_level,
+            english_mode: false,
             main_model: ModelConfig {
                 api_url: main_url,
                 api_key: main_key,
@@ -126,6 +131,9 @@ impl Settings {
     pub fn apply_patch(&mut self, patch: &SettingsPatch) -> Result<(), String> {
         if let Some(level) = patch.log_level {
             self.log_level = level;
+        }
+        if let Some(english_mode) = patch.english_mode {
+            self.english_mode = english_mode;
         }
         let main = &mut self.main_model;
         let vision = &mut self.vision_model;
@@ -181,6 +189,7 @@ impl Settings {
     pub fn public_view(&self) -> serde_json::Value {
         json!({
             "log_level": self.log_level,
+            "english_mode": self.english_mode,
             "main_model": {
                 "api_url": self.main_model.api_url,
                 "model": self.main_model.model,
@@ -204,6 +213,7 @@ mod tests {
     fn sample() -> Settings {
         Settings {
             log_level: Level::Info,
+            english_mode: false,
             main_model: ModelConfig {
                 api_url: "https://api.deepseek.com".into(),
                 api_key: "sk-secret-key".into(),
@@ -223,6 +233,7 @@ mod tests {
     fn public_view_never_leaks_api_key() {
         let view = sample().public_view();
         assert!(view.get("api_key").is_none());
+        assert_eq!(view["english_mode"], false);
         assert!(view["main_model"].get("api_key").is_none());
         assert!(view["vision_model"].get("api_key").is_none());
         assert_eq!(view["main_model"]["key_set"], true);
@@ -249,6 +260,18 @@ mod tests {
             ..Default::default()
         };
         assert!(settings.apply_patch(&bad_model).is_err());
+    }
+
+    #[test]
+    fn patch_applies_english_mode() {
+        let mut settings = sample();
+        let patch = SettingsPatch {
+            english_mode: Some(true),
+            ..Default::default()
+        };
+        settings.apply_patch(&patch).unwrap();
+        assert!(settings.english_mode);
+        assert_eq!(settings.public_view()["english_mode"], true);
     }
 
     #[test]

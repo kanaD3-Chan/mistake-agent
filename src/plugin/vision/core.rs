@@ -30,7 +30,8 @@ pub(crate) async fn read_handler(
 ) -> Result<Value, ToolError> {
     let p: ReadParams =
         serde_json::from_value(params).map_err(|e| ToolError::invalid_params(e.to_string()))?;
-    let content = read_content(&model, &storage, &p.file, &ctx.events, "vision::read").await?;
+    let content =
+        read_content(&model, &storage, &p.file, &ctx.events, "vision::read", ctx.english_mode).await?;
     Ok(json!({
         "content": content,
         "chars": content.chars().count(),
@@ -48,6 +49,7 @@ pub(crate) async fn read_content(
     file: &str,
     events: &Arc<dyn EventSink>,
     entry: &str,
+    english_mode: bool,
 ) -> Result<String, ToolError> {
     let bytes = storage
         .read_staged(file)
@@ -72,7 +74,7 @@ pub(crate) async fn read_content(
                 "webp" => "image/webp",
                 _ => "image/bmp",
             };
-            understand_image(model, mime, &bytes, events, entry).await?
+            understand_image(model, mime, &bytes, events, entry, english_mode).await?
         }
         "pdf" => extract_pdf_text(&bytes).await?,
         other => {
@@ -96,13 +98,14 @@ async fn understand_image(
     bytes: &[u8],
     events: &Arc<dyn EventSink>,
     entry: &str,
+    english_mode: bool,
 ) -> Result<String, ToolError> {
     let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
     let attachments = vec![Attachment {
         mime: mime.into(),
         data_base64: b64,
     }];
-    let mut msg = Message::user(vision_prompt());
+    let mut msg = Message::user(vision_prompt(english_mode));
     if let MessageKind::User { attachments: a, .. } = &mut msg.kind {
         *a = attachments;
     }
@@ -195,9 +198,16 @@ mod tests {
             Auditor::new(Arc::new(MemoryAuditSink::default())),
         );
         let events: Arc<dyn EventSink> = Arc::new(MemoryEventSink::default());
-        let content = read_content(&model, &storage, &temp.to_string_lossy(), &events, "vision::read")
-            .await
-            .expect("读图应成功");
+        let content = read_content(
+            &model,
+            &storage,
+            &temp.to_string_lossy(),
+            &events,
+            "vision::read",
+            false,
+        )
+        .await
+        .expect("读图应成功");
         assert!(content.contains("银发少女"));
         assert!(temp.exists(), "read 不应删除暂存文件（判分还要用）");
         let _ = std::fs::remove_file(&temp);
@@ -212,7 +222,7 @@ mod tests {
             Auditor::new(Arc::new(MemoryAuditSink::default())),
         );
         let events: Arc<dyn EventSink> = Arc::new(MemoryEventSink::default());
-        let err = read_content(&model, &storage, "/etc/passwd", &events, "vision::read")
+        let err = read_content(&model, &storage, "/etc/passwd", &events, "vision::read", false)
             .await
             .expect_err("非暂存路径应被拒绝");
         assert!(err.message.contains("读取暂存文件失败"));
@@ -230,9 +240,16 @@ mod tests {
             Auditor::new(Arc::new(MemoryAuditSink::default())),
         );
         let events: Arc<dyn EventSink> = Arc::new(MemoryEventSink::default());
-        let err = read_content(&model, &storage, &temp.to_string_lossy(), &events, "vision::read")
-            .await
-            .expect_err("非 mistake-agent- 前缀应拒绝");
+        let err = read_content(
+            &model,
+            &storage,
+            &temp.to_string_lossy(),
+            &events,
+            "vision::read",
+            false,
+        )
+        .await
+        .expect_err("非 mistake-agent- 前缀应拒绝");
         assert!(err.message.contains("读取暂存文件失败"));
         let _ = std::fs::remove_file(&temp);
     }

@@ -44,12 +44,13 @@ fn difficulty_label(difficulty: Difficulty) -> &'static str {
 /// 模板未命中时走 LLM 生成：json_schema 强约束 + 容灾解析。
 pub async fn model_generate(
     model: &ModelHandle,
+    english_mode: bool,
     knowledge_point: &str,
     difficulty: Difficulty,
     mastered: &[String],
     geometry_feedback: Option<&str>,
 ) -> Result<PracticeItem, ToolError> {
-    let system = Message::system(practice_generate_system_prompt());
+    let system = Message::system(practice_generate_system_prompt(english_mode));
     let mut lines = vec![
         format!("知识点：{}", knowledge_point.trim()),
         format!("难度：{}", difficulty_label(difficulty)),
@@ -100,6 +101,7 @@ pub const MAX_GEOMETRY_ATTEMPTS: u32 = 3;
 pub async fn generate_with_check(
     compute: &ComputeHandle,
     model: &ModelHandle,
+    english_mode: bool,
     knowledge_point: &str,
     difficulty: Difficulty,
     mastered: &[String],
@@ -109,6 +111,7 @@ pub async fn generate_with_check(
     for attempt in 0..MAX_GEOMETRY_ATTEMPTS {
         let item = model_generate(
             model,
+            english_mode,
             knowledge_point,
             difficulty,
             mastered,

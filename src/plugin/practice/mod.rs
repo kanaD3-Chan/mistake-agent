@@ -115,8 +115,10 @@ impl UserPlugin for PracticePlugin {
                 let compute = compute_for_generate.clone();
                 let storage = storage_for_generate.clone();
                 let signal = call_ctx.signal.clone();
+                let english_mode = call_ctx.english_mode;
                 Box::pin(async move {
-                    generate_handler(model, memory, compute, storage, signal, params).await
+                    generate_handler(model, memory, compute, storage, signal, english_mode, params)
+                        .await
                 })
             }),
         )?;
@@ -135,11 +137,14 @@ impl UserPlugin for PracticePlugin {
         let memory_for_check = memory.clone();
         ctx.registrar.tool(
             "check",
-            std::sync::Arc::new(move |_call_ctx: &ToolCallContext, params: Value| {
+            std::sync::Arc::new(move |call_ctx: &ToolCallContext, params: Value| {
                 let model = model_for_check.clone();
                 let storage = storage_for_check.clone();
                 let memory = memory_for_check.clone();
-                Box::pin(async move { check_handler(model, storage, memory, params).await })
+                let english_mode = call_ctx.english_mode;
+                Box::pin(async move {
+                    check_handler(model, storage, memory, english_mode, params).await
+                })
             }),
         )?;
 
@@ -157,6 +162,7 @@ async fn generate_handler(
     compute: ComputeHandle,
     storage: StorageHandle,
     signal: AbortSignal,
+    english_mode: bool,
     params: Value,
 ) -> Result<Value, ToolError> {
     let p: GenerateParams =
@@ -188,6 +194,7 @@ async fn generate_handler(
                 match generate_with_check(
                     &compute,
                     &model,
+                    english_mode,
                     knowledge_point,
                     difficulty,
                     &mastered,
@@ -216,6 +223,7 @@ async fn generate_handler(
         None => match generate_with_check(
             &compute,
             &model,
+            english_mode,
             knowledge_point,
             difficulty,
             &mastered,
@@ -327,6 +335,7 @@ mod tests {
             compute,
             storage,
             AbortSignal::new(),
+            false,
             json!({
                 "knowledge_point": "三角形全等判定",
                 "difficulty": "basic",
@@ -352,6 +361,7 @@ mod tests {
             compute,
             storage,
             AbortSignal::new(),
+            false,
             json!({
                 "knowledge_point": "数列",
                 "difficulty": "variant",
@@ -375,6 +385,7 @@ mod tests {
             compute,
             storage,
             AbortSignal::new(),
+            false,
             json!({
                 "knowledge_point": "量子力学",
                 "difficulty": "variant",
@@ -396,6 +407,7 @@ mod tests {
             compute,
             storage,
             AbortSignal::new(),
+            false,
             json!({
                 "knowledge_point": "集合运算",
                 "difficulty": "exam",
@@ -419,6 +431,7 @@ mod tests {
             compute,
             storage,
             AbortSignal::new(),
+            false,
             json!({
                 "knowledge_point": "量子力学",
                 "difficulty": "exam",
@@ -450,6 +463,7 @@ mod tests {
             compute,
             storage,
             AbortSignal::new(),
+            false,
             json!({
                 "knowledge_point": "三角形全等判定",
                 "difficulty": "basic",
@@ -475,6 +489,7 @@ mod tests {
             compute,
             storage,
             AbortSignal::new(),
+            false,
             json!({
                 "knowledge_point": "圆与切线",
                 "difficulty": "variant",
@@ -505,6 +520,7 @@ mod tests {
             compute,
             storage,
             AbortSignal::new(),
+            false,
             json!({
                 "knowledge_point": "圆与切线",
                 "difficulty": "variant",
@@ -536,6 +552,7 @@ mod tests {
             compute,
             storage,
             AbortSignal::new(),
+            false,
             json!({
                 "knowledge_point": "圆与切线",
                 "difficulty": "variant",
@@ -562,6 +579,7 @@ mod tests {
             compute,
             storage,
             AbortSignal::new(),
+            false,
             json!({
                 "knowledge_point": "圆与切线",
                 "difficulty": "variant",

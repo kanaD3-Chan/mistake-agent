@@ -12,7 +12,7 @@ use crate::kernel::plugin::services::{AbortSignal, TokenUsage, ToolSchema};
 #[serde(rename_all = "snake_case")]
 pub enum InterruptReason {
     ModelUnavailable,
-    SettingsChanged,
+    ConfigChanged,
     AuditFailure,
     PluginRequested(String),
 }
