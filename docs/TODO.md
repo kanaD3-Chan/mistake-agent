@@ -82,10 +82,10 @@
 
 **待办**：后续把 `get_rules_status` 从通用 `Method` 枚举迁入 `AppRpc` 扩展，统一走 `CustomMethod` 兜底，彻底移除通用枚举对业务方法的依赖。迁移时同步删 `Method::GetRulesStatus` 枚举变体与 `handlers.rs` 对应分支，前端 wire 不变（`{method:"get_rules_status"}` 仍兼容）。
 
-## 近期：桌面输入方式增强（规划，未落地）
+## 近期：桌面输入方式增强（剪贴板已落地，摄像头未落地）
 
-- **剪贴板粘贴截图**：WebView 监听 `paste`（Ctrl+V / 右键粘贴），图片直接进入附件暂存，与「选择作业文件」共用 vision__read → 判分归档管线。
-- **摄像头拍题**：调用 WebView `getUserMedia` 拍题入队，拍完即走同一条 OCR 管线；需处理 WebView2 相机权限与设备选择。
+- [x] **剪贴板粘贴截图**：WebView 监听 `paste`（Ctrl+V / 右键粘贴），图片直接进入附件暂存，与「选择作业文件」共用 vision__read → 判分归档管线。✅ 已落地（2026-08-17）：新增 `stage_clipboard_image` Tauri 命令（`stage_bytes` 与选文件共用落盘），ChatPage 根节点 `@paste` 监听，粘贴截图入 `pendingAttachments` 走同一暂存/判分管线。
+- [ ] **摄像头拍题**：调用 WebView `getUserMedia` 拍题入队，拍完即走同一条 OCR 管线；需处理 WebView2 相机权限与设备选择。
 
 ## 中期：Android 手机 / 平板适配（规划，未落地）
 

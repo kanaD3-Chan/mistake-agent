@@ -95,6 +95,11 @@ export function useKernel() {
     return invoke("pick_homework_file");
   }
 
+  /** 剪贴板粘贴截图：把图片字节（MIME + base64）交给后端暂存，返回 {temp_path, asset_path, name}。 */
+  function stageClipboardImage(mime, dataBase64) {
+    return invoke("stage_clipboard_image", { mime, dataBase64 });
+  }
+
   /** 教学规则（数据根 AGENTS.md）加载状态：{loaded, path, reason?, bytes?}。 */
   function getRulesStatus() {
     return call("get_rules_status", {}, 10000);
@@ -113,6 +118,7 @@ export function useKernel() {
     triggerCommand,
     listTools,
     pickHomeworkFile,
+    stageClipboardImage,
     getRulesStatus,
     openRulesFile,
   };
