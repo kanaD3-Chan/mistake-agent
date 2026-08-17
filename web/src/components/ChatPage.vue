@@ -627,7 +627,12 @@ async function abortTurn() {
 async function pickHomework() {
   const picked = await props.kernel.pickHomeworkFile();
   if (!picked) return;
-  // 选完不立即发送：附件挂起在输入区上方，可继续添加（多张/混合 PDF），发送时一起带上。
+  addPendingAttachment(picked);
+  setStatus(false, "已添加附件，可继续选择或直接输入内容后发送");
+}
+
+/** 附件挂起（选文件 / 粘截图共用）：不立即发送，输入区上方预览，发送时一起带上。 */
+function addPendingAttachment(picked) {
   const item = {
     temp_path: picked.temp_path,
     asset_path: picked.asset_path,
@@ -643,7 +648,49 @@ async function pickHomework() {
     })
     .catch(() => {});
   inputEl.value?.focus();
-  setStatus(false, "已添加附件，可继续选择或直接输入内容后发送");
+}
+
+/** 剪贴板粘贴截图（Ctrl+V / 右键粘贴）：图片直接进入附件暂存，复用 vision::read → 判分管线。 */
+async function onPaste(event) {
+  const items = event.clipboardData?.items;
+  if (!items || !items.length) return;
+  let imageFile = null;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.kind === "file" && item.type?.startsWith("image/")) {
+      const f = item.getAsFile();
+      if (f) {
+        imageFile = f;
+        break;
+      }
+    }
+  }
+  if (!imageFile) return; // 文本粘贴：不拦截，走默认行为
+  event.preventDefault();
+  await stageClipboardFile(imageFile);
+}
+
+async function stageClipboardFile(file) {
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    const m = /^data:([^;,]+);base64,(.*)$/s.exec(dataUrl);
+    if (!m) throw new Error("无法解析粘贴的图片");
+    const picked = await props.kernel.stageClipboardImage(m[1], m[2]);
+    if (!picked) return;
+    addPendingAttachment(picked);
+    setStatus(false, "已粘贴截图，可继续添加或直接发送");
+  } catch (e) {
+    addBubble({ type: "error", text: `粘贴图片失败：${e.message}` });
+  }
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("读取剪贴板图片失败"));
+    reader.readAsDataURL(file);
+  });
 }
 
 function removePendingAttachment(index) {
@@ -734,7 +781,7 @@ onUnmounted(() => unsubscribe?.());
 </script>
 
 <template>
-  <div class="chat-page">
+  <div class="chat-page" @paste="onPaste">
     <div class="chat-topbar">
       <button
         v-if="false"

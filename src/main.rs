@@ -105,29 +105,63 @@ async fn pick_homework_file() -> Result<Option<PickResult>, String> {
 
 /// 复制到系统临时目录，文件名带 mistake-agent- 前缀（kernel 白名单依据）。
 fn stage_files(source: &Path) -> Result<PickResult, String> {
-    let ext = source.extension().and_then(|e| e.to_str()).unwrap_or("dat");
+    let ext = source
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("dat")
+        .to_string();
+    let bytes = std::fs::read(source).map_err(|e| format!("读取文件失败：{e}"))?;
+    let name = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("附件")
+        .to_string();
+    stage_bytes(&bytes, &ext, name)
+}
+
+/// 把附件字节写入两份副本——1) 系统临时目录（mistake-agent- 前缀，kernel 白名单，处理后即删）；
+/// 2) 数据根目录 uploads/（持久化，前端图片/PDF 展示用）。「选择作业文件」与「剪贴板粘贴」共用。
+fn stage_bytes(bytes: &[u8], ext: &str, name: String) -> Result<PickResult, String> {
     let uuid = uuid::Uuid::new_v4();
     let temp_name = format!("mistake-agent-{uuid}.{ext}");
     let temp_dest = std::env::temp_dir().join(&temp_name);
-    std::fs::copy(source, &temp_dest).map_err(|e| format!("暂存文件失败：{e}"))?;
+    std::fs::write(&temp_dest, bytes).map_err(|e| format!("暂存文件失败：{e}"))?;
 
     let root = mistake_agent::kernel::settings::Settings::data_root();
     let uploads = root.join("uploads");
     std::fs::create_dir_all(&uploads).map_err(|e| format!("创建附件目录失败：{e}"))?;
     let asset_name = format!("{uuid}.{ext}");
     let asset_dest = uploads.join(&asset_name);
-    std::fs::copy(source, &asset_dest).map_err(|e| format!("附件持久化失败：{e}"))?;
+    std::fs::write(&asset_dest, bytes).map_err(|e| format!("附件持久化失败：{e}"))?;
 
-    let name = source
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(&asset_name)
-        .to_string();
     Ok(PickResult {
         temp_path: temp_dest.to_string_lossy().into_owned(),
         asset_path: asset_dest.to_string_lossy().into_owned(),
         name,
     })
+}
+
+/// 剪贴板粘贴截图：接收图片字节（base64 + MIME），走与「选择作业文件」相同的暂存管线。
+#[tauri::command]
+fn stage_clipboard_image(mime: String, data_base64: String) -> Result<PickResult, String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.trim())
+        .map_err(|e| format!("图片数据解码失败：{e}"))?;
+    let ext = ext_for_mime(&mime);
+    stage_bytes(&bytes, ext, format!("粘贴截图.{ext}"))
+}
+
+/// 剪贴板图片 MIME → 文件扩展名（截图几乎总是 png，未知类型兜底 png）。
+fn ext_for_mime(mime: &str) -> &'static str {
+    let mime = mime.trim().to_ascii_lowercase();
+    match mime.as_str() {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/webp" => "webp",
+        "image/bmp" => "bmp",
+        _ => "png",
+    }
 }
 
 /// 读取 uploads/ 持久附件（base64），前端渲染图片/PDF 用。
@@ -205,6 +239,7 @@ fn main() {
             start_kernel,
             kernel_send,
             pick_homework_file,
+            stage_clipboard_image,
             read_upload,
             open_attachment,
             open_rules_file
@@ -229,5 +264,37 @@ mod tests {
         assert!(verify_in_uploads(&inside.to_string_lossy(), &uploads).is_ok());
         assert!(verify_in_uploads(&outside.to_string_lossy(), &uploads).is_err());
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn ext_for_mime_maps_common_types() {
+        assert_eq!(ext_for_mime("image/png"), "png");
+        assert_eq!(ext_for_mime("image/jpeg"), "jpg");
+        assert_eq!(ext_for_mime("image/webp"), "webp");
+        assert_eq!(ext_for_mime("image/bmp"), "bmp");
+        // 未知类型兜底 png（剪贴板截图几乎总是 png）。
+        assert_eq!(ext_for_mime("application/octet-stream"), "png");
+    }
+
+    #[test]
+    fn stage_clipboard_image_writes_temp_and_uploads() {
+        use base64::Engine;
+        let bytes: &[u8] = b"fake-clipboard-image-bytes";
+        let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+        let picked = stage_clipboard_image("image/png".into(), b64).unwrap();
+        assert!(picked.name.ends_with(".png"));
+        assert!(
+            picked.temp_path.contains("mistake-agent-"),
+            "temp 需带白名单前缀"
+        );
+        assert_eq!(std::fs::read(&picked.temp_path).unwrap(), bytes);
+        assert_eq!(std::fs::read(&picked.asset_path).unwrap(), bytes);
+        let _ = std::fs::remove_file(&picked.temp_path);
+        let _ = std::fs::remove_file(&picked.asset_path);
+    }
+
+    #[test]
+    fn stage_clipboard_image_rejects_invalid_base64() {
+        assert!(stage_clipboard_image("image/png".into(), "!!!not-base64!!!".into()).is_err());
     }
 }
