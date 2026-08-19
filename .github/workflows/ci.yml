@@ -33,25 +33,36 @@ jobs:
         with:
           cache-on-failure: true
 
+      - name: Use official Ubuntu apt mirrors
+        # GitHub ubuntu-latest runner image 默认 /etc/apt/sources.list 带
+        # azure.archive.ubuntu.com (azure region 镜像，常不通)。
+        # /etc/apt/sources.list.d/ 还有 microsoft / google-chrome 等第三方源，
+        # 我们 build Tauri 都不需要。直接换成纯官方 archive.ubuntu.com。
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*.list
+          sudo tee /etc/apt/sources.list > /dev/null <<'EOF'
+          deb http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse
+          deb http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
+          deb http://archive.ubuntu.com/ubuntu noble-backports main restricted universe multiverse
+          deb http://archive.ubuntu.com/ubuntu noble-security main restricted universe multiverse
+          EOF
+
       - name: Cache apt archives
-        # Ubuntu runner 镜像默认有 azure.archive.ubuntu.com 镜像 (常不通)。
-        # 冷启靠 actions/cache 跳过下载 → 暖启 apt 阶段秒过。
-        # Key bump: ubuntu-latest 镜像升级时改 -v1 → -v2。
+        # 只 cache .deb 归档 (大文件)，不 cache /var/lib/apt (源 index，
+        # 小且与 sources 强相关——sources 变就废)。暖启 install 秒过。
         if: runner.os == 'Linux'
         uses: actions/cache@v4
         with:
-          path: |
-            /var/cache/apt/archives
-            /var/lib/apt
+          path: /var/cache/apt/archives
           key: apt-${{ runner.os }}-v1
           restore-keys: |
             apt-${{ runner.os }}-
 
       - name: Install Linux build deps
         if: runner.os == 'Linux'
-        # -o Acquire::http::Timeout=10  → bad mirror (azure.archive.ubuntu.com)
-        # 10s 超时即放弃，不再等默认 30s+。一次 apt-get update 从 ~2 min 降到 ~30s。
-        # --no-install-recommends      → 跳过推荐包，小一些。
+        # 防御性：timeout 10s 兜底（万一官方源也慢）。
+        # --no-install-recommends 跳过推荐包。
         run: |
           sudo apt-get update -o Acquire::http::Timeout=10 -o Acquire::https::Timeout=10
           sudo apt-get install -y --no-install-recommends \
