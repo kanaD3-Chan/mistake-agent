@@ -41,6 +41,11 @@ jobs:
             build-essential \
             file
 
+      - name: Install tauri-cli
+        # `cargo tauri build` 在 `make bundle` 中调用；runner 默认没装 tauri-cli，
+        # 需 cargo install（Cargo.toml 只包含 tauri-build 作为 build dep）。
+        run: cargo install tauri-cli --version "^2.0"
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
