@@ -1,8 +1,9 @@
-//! 错题领域模型（app 侧业务类型，不随 so-lite-agent 通用内核分发）。
+//! 错题领域模型（app 侧业务类型，不随 `so-lite-agent` 通用内核分发）。
 //!
 //! M1 解耦：`MistakeStore` 与错题数据结构从 `kernel::plugin::services`
 //! 移到本模块；kernel 契约层经 `pub use` 兼容重导出，存储实现与业务插件
-//! 以本模块为唯一事实源。提取 so-lite-agent 时，本模块留在使用方。
+//! 以本模块为唯一事实源。`so-lite-agent` 已按 ADR-0037 迁出至独立仓库，
+//! 本模块仍留在 mistake-agent（app 侧业务类型）。
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

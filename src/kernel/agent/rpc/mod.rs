@@ -251,7 +251,7 @@ impl KernelBuilder {
 }
 
 /// mistake-agent 应用专属 RPC 扩展：settings/balance/cache/compute 方法走 custom 兜底，
-/// 不占通用 `Method` 子集（M1 解耦，提取 so-lite-agent 时留在使用方）。
+/// 不占通用 `Method` 子集（M1 解耦，`so-lite-agent` 已迁出至独立仓库；本项留在 mistake-agent app 侧）。
 struct AppRpc {
     settings: Arc<std::sync::RwLock<Settings>>,
     store: Arc<dyn SessionStore>,

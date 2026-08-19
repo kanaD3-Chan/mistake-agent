@@ -1,5 +1,4 @@
 /target/
-/so-lite-agent/target/
 /gen/
 /web/dist/
 node_modules/
