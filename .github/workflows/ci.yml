@@ -36,11 +36,16 @@ jobs:
       - name: Use official Ubuntu apt mirrors
         # GitHub ubuntu-latest runner image 默认 /etc/apt/sources.list 带
         # azure.archive.ubuntu.com (azure region 镜像，常不通)。
-        # /etc/apt/sources.list.d/ 还有 microsoft / google-chrome 等第三方源，
-        # 我们 build Tauri 都不需要。直接换成纯官方 archive.ubuntu.com。
+        # /etc/apt/sources.list.d/ 还有 microsoft / google-chrome 等第三方源。
+        # 还可能有 /etc/apt/apt-mirrors.txt (Mirrorlist 类型，与 sources.list 独立)。
+        # Ubuntu 24.04 的新格式 .sources 我之前的 `*.list` glob 也抓不到。
+        # nuke 全部，只留我们写的官方 archive.ubuntu.com。
         if: runner.os == 'Linux'
         run: |
+          sudo rm -f /etc/apt/sources.list
           sudo rm -f /etc/apt/sources.list.d/*.list
+          sudo rm -f /etc/apt/sources.list.d/*.sources
+          sudo rm -f /etc/apt/apt-mirrors.txt
           sudo tee /etc/apt/sources.list > /dev/null <<'EOF'
           deb http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse
           deb http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
