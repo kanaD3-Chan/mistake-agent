@@ -51,12 +51,14 @@ jobs:
         # 想强制 invalidate 时改 -v1 → -v2。
         # 跨平台：靠 actions/cache 的 `outputs.cache-hit` 判定是否要 install，
         # 不写 shell 脚本（避免 Windows pwsh / Linux bash 语法差异）。
+        #
+        # path 用 OS 条件分支：actions/cache 的语义是 list 里所有路径都存在
+        # 才保存；列两个（tauri + tauri.exe）→ 各自平台有一个不存在 →
+        # "Path Validation Error"，不保存。所以单平台只列一个。
         id: tauri-cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cargo/bin/tauri
-            ~/.cargo/bin/tauri.exe
+          path: ${{ runner.os == 'Windows' && '~/.cargo/bin/tauri.exe' || '~/.cargo/bin/tauri' }}
           key: tauri-cli-${{ runner.os }}-2.x-v1
 
       - name: Install tauri-cli (skip if cached)
@@ -65,6 +67,17 @@ jobs:
         # cache-hit == 'true' 时 skip → 暖启省 2-3 min。
         if: steps.tauri-cache.outputs.cache-hit != 'true'
         run: cargo install tauri-cli --version "^2.0"
+
+      - name: Verify tauri-cli install
+        # 诊断：cargo install 跑完 tauri 二进制到底在哪、能否直接 invoke。
+        # 失败也不会 fail step（CI 还能继续看 make bundle 报错）。
+        if: steps.tauri-cache.outputs.cache-hit != 'true'
+        run: |
+          echo "--- which/where tauri ---"
+          which tauri 2>&1 || echo "WARN: tauri not in PATH"
+          tauri --version 2>&1 || echo "WARN: tauri --version failed"
+          echo "--- ls ~/.cargo/bin/ ---"
+          ls -la ~/.cargo/bin/ 2>&1 | head -20 || echo "WARN: cannot list ~/.cargo/bin/"
 
       - name: Install Node.js
         uses: actions/setup-node@v4
