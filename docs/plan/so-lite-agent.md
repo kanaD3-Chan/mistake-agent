@@ -1,6 +1,8 @@
-# 后续计划：Agent core 剥离为 `so-lite-agent` crate
+# 后续计划：Agent core 剥离为 `so-lite-agent` crate（已迁出，历史归档）
 
-> 状态：M1-M4 已落地（2026-08-11），M5 待办。决策记录见 [ADR-0037](../adr/0037-so-lite-agent-crate-extraction.md)。
+> **2026-08-19 更新**：M1-M4 已落地并迁出至独立 `so-lite-agent` 仓库。本文件仅作历史归档，新仓库的迭代计划以新仓库的 issue tracker 为准。mistake-agent 本仓库自 v0.1.0 起不再包含 `so-lite-agent/` 子目录（见 [CHANGELOG.md](../../CHANGELOG.md) "Removed" 节）。
+>
+> 原始决策：M1-M4 已落地（2026-08-11），M5 待办。决策记录见 [ADR-0037](../adr/0037-so-lite-agent-crate-extraction.md)。
 
 ## 目标
 

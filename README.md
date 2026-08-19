@@ -152,9 +152,11 @@ cd web && node scripts/katex-check.mjs      # LaTeX 渲染链路自检
 - [docs/api.md](docs/api.md) — GUI ↔ kernel RPC 协议与真实模型对接
 - [docs/build.md](docs/build.md) — 构建流程与 Pyodide 离线包步骤
 - [docs/adr/](docs/adr/) — 架构决策记录（43 条）
-- [docs/plan/so-lite-agent.md](docs/plan/so-lite-agent.md) — Agent core 剥离后续计划（ADR-0037，未落地）
+- [docs/plan/so-lite-agent.md](docs/plan/so-lite-agent.md) — Agent core 剥离方案归档（ADR-0037；crate 已迁出至独立仓库）
 - [docs/prompts.md](docs/prompts.md) / [docs/testing.md](docs/testing.md) / [docs/usage.md](docs/usage.md) — Prompt、测试与使用记录
 - [docs/variants.md](docs/variants.md) — 变式出题设计（场景二，已按设计落地）
+- [CHANGELOG.md](CHANGELOG.md) — 版本变更记录（Keep a Changelog）
+- [`.github/workflows/ci.yml`](.github/workflows/ci.yml) / [`.github/workflows/release.yml`](.github/workflows/release.yml) — CI（PR + push）与 tag 触发的 release workflow
 
 ## 许可证
 

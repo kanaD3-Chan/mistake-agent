@@ -10,7 +10,7 @@
 _Avoid_: 核心、引擎（含义过宽）
 
 **Agent core（Agent 核心）**:
-可跨应用复用的通用 Agent 运行时：Agent loop、工具注册与调度、会话生命周期、模型运行时抽象与审计护栏；即 Kernel 剔除应用专属内核插件后余下的部分。以独立 crate `so-lite-agent` 提供（M1/M2 已落地：本仓库解耦 + `so-lite-agent/` 骨架；M3-M5 待办），新 Agent 通过 `cargo add so-lite-agent` 复用，内核插件由使用方自行编写。
+可跨应用复用的通用 Agent 运行时：Agent loop、工具注册与调度、会话生命周期、模型运行时抽象与审计护栏；即 Kernel 剔除应用专属内核插件后余下的部分。已按 ADR-0037 从 mistake-agent 提取为独立 crate `so-lite-agent` 仓库（M1-M4 已落地并迁出，M5 crates.io 发布待办），新 Agent 通过 `cargo add so-lite-agent` 复用，内核插件由使用方自行编写。
 _Avoid_: 引擎、Agent 内核（与 Kernel 混用）
 
 **Kernel plugin（内核插件）**:

@@ -2,7 +2,7 @@
 
 ## 项目速览
 
-Mistake Agent v2：面向中学生的本地错题管理 + 辅助学习 Agent（Windows 桌面应用，Tauri GUI + 自研 Rust kernel，Rust 2024 edition，mistake-agent 本体单 crate；ADR-0037 的 `so-lite-agent/` 为独立 crate 骨架）。
+Mistake Agent v2：面向中学生的本地错题管理 + 辅助学习 Agent（Windows 桌面应用，Tauri GUI + 自研 Rust kernel，Rust 2024 edition，mistake-agent 本体单 crate；Agent 核心已按 ADR-0037 提取为独立 `so-lite-agent` crate 仓库）。
 
 **动任何代码之前，先读一遍 [PROJECT.md](PROJECT.md)**——它是唯一入门文档，包含架构、信任模型、机制、命名规范、里程碑和分工。
 
@@ -24,7 +24,7 @@ Mistake Agent v2：面向中学生的本地错题管理 + 辅助学习 Agent（W
 |---|---|---|
 | 刚加入项目 / 开始新任务 | 按「Agent 启动流程」读 PROJECT.md → CONTEXT.md → docs/TODO.md → docs/adr/ | 全貌、术语、待办、决策；不懂的词去 CONTEXT.md 查 |
 | 改设计 / 做架构决策 | docs/adr/ 全部 + CONTEXT.md | 决策留痕；新决策要新增 ADR 并更新术语 |
-| 看后续计划 / so-lite-agent 剥离 | docs/plan/so-lite-agent.md + docs/adr/0037 | M1/M2 已落地，M3-M5 待办；mistake-agent 本体在 M5 前仍单 crate |
+| Agent core 剥离（已迁出，ADR-0037） | docs/plan/so-lite-agent.md + docs/adr/0037 | M1-M4 已落地并迁出至独立 `so-lite-agent` 仓库；M5（crates.io 发布）在新仓库推进；mistake-agent 本体保持单 crate |
 | 改内核机制（loop/调度/注册表） | PROJECT.md §4-§5 + docs/adr/0003~0010 | 两段式契约、CallerPolicy、护栏、容灾 |
 | 改会话 / 消息树 | PROJECT.md §5 会话 + docs/adr/0006、0007 | 双层调度、守卫模型、Goal、历史路由 |
 | 改内核插件（services） | PROJECT.md §4-§5 + docs/adr/0001、0014、0015、0016 | 服务句柄、ModelHandle、配置独占、compute 桥接 |
@@ -48,7 +48,7 @@ cargo fmt --check
 
 ## 架构红线（改代码时逐条遵守）
 
-- mistake-agent 本体单 crate：`src/kernel/`（内核）与 `src/plugin/`（用户插件）分区，**M5 切换前不再新增 crate 拆分**；`so-lite-agent/` 是 ADR-0037 允许的独立通用运行时 crate（M1/M2 已落地，M3-M5 待办）
+- mistake-agent 本体单 crate：`src/kernel/`（内核）与 `src/plugin/`（用户插件）分区，**不再新增 crate 拆分**；Agent 核心已按 ADR-0037 迁出至独立 `so-lite-agent` 仓库（`docs/plan/so-lite-agent.md` 仅作历史归档）
 - 能力边界：内核实现用 `pub(crate)` 隐藏；用户插件只经公开 API 面交互；不引入全局可变状态绕过句柄
 - CallerPolicy：`UserAndModel` 工具必须配同名用户入口；`UserOnly` 不得进入模型工具列表
 - 入口点命名 `namespace::tool`：插件只写短名，kernel 拼全名，撞名由注册表拒绝

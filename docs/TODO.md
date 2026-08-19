@@ -50,18 +50,16 @@
 - [ ] **Agent 流程图**：任务书交付物要求"源代码仓库（含 Agent 流程图、Prompt 库）"——Prompt 库已有（docs/prompts.md），缺 agent 工作流图（工具调度/会话切换/重测循环的流程图，答辩文档用）。
 
 
-## Agent core 剥离为 so-lite-agent（M1-M4 已落地，M5 未落地）
+## Agent core 剥离为 so-lite-agent（✅ 已迁出，M5 在新仓库推进）
 
-把通用 Agent 运行时（loop/工具注册/会话/模型 Provider 抽象/通用 RPC）剥离为独立 crate `so-lite-agent`，开箱即用（`cargo add` 即可开发新 Agent），内核/用户插件由使用方编写。完整计划见 [docs/plan/so-lite-agent.md](plan/so-lite-agent.md)，决策见 [ADR-0037](adr/0037-so-lite-agent-crate-extraction.md)。当前 M1-M4 已落地，M5 待办。
+把通用 Agent 运行时（loop/工具注册/会话/模型 Provider 抽象/通用 RPC）剥离为独立 crate `so-lite-agent`，开箱即用（`cargo add` 即可开发新 Agent），内核/用户插件由使用方编写。完整计划见 [docs/plan/so-lite-agent.md](plan/so-lite-agent.md)（历史归档），决策见 [ADR-0037](adr/0037-so-lite-agent-crate-extraction.md)。
 
-已落地：
-- M1 本仓库解耦（行为不变）：`system_prompt` 注入、`Interrupt::ConfigChanged`、错题领域类型移到 `src/mistake.rs`、RPC 通用子集 + `custom` 兜底 + `RpcExtension` + `KernelBuilder`。
-- M2 本地独立 crate 骨架 `so-lite-agent/`：通用 registry/dispatch/loop/会话存储/RPC + `InMemorySessionStore` + `MockModelService`，`cargo run --example hello` 跑通 mock 回合。
-- M3 Provider 层：`register_provider()` + `openai/responses/anthropic` 适配器，本地 SSE 测试通过，真实 API 测试 ignored。
-- M4 插件手册/参考模板随 crate（`so-lite-agent/docs/plugin-dev/`），内核 + 用户插件双注册跑通测试。
-
-未落地：
-- M5 发布 crates.io（0.x），mistake-agent 切换到新 crate 消费并删除重复代码。
+- ✅ M1 本仓库解耦（行为不变）：`system_prompt` 注入、`Interrupt::ConfigChanged`、错题领域类型移到 `src/mistake.rs`、RPC 通用子集 + `custom` 兜底 + `RpcExtension` + `KernelBuilder`。
+- ✅ M2 本地独立 crate 骨架 `so-lite-agent/`：通用 registry/dispatch/loop/会话存储/RPC + `InMemorySessionStore` + `MockModelService`，`cargo run --example hello` 跑通 mock 回合。
+- ✅ M3 Provider 层：`register_provider()` + `openai/responses/anthropic` 适配器，本地 SSE 测试通过，真实 API 测试 ignored。
+- ✅ M4 插件手册/参考模板随 crate（`so-lite-agent/docs/plugin-dev/`），内核 + 用户插件双注册跑通测试。
+- ✅ **迁出完成（v0.1.0，2026-08-19）**：`so-lite-agent/` 已迁出至独立仓库；本仓库不再包含该子目录（见 [CHANGELOG.md](../CHANGELOG.md) "Removed" 节）。
+- ⏳ M5 发布 crates.io（0.x）：在新仓库推进；mistake-agent 后续按需切换消费（`cargo add so-lite-agent`）。
 
 ## 近期：英语练习模式（已落地）
 

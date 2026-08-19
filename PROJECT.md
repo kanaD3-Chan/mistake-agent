@@ -169,7 +169,7 @@ GUI → kernel：`send_user_message`、`trigger_command(entry, params)`、`edit_
 ```
 mistake-agent/
 ├── CONTEXT.md / docs/adr/        ← 术语表与决策留痕（本项目历史）
-├── docs/plan/                    ← 后续计划（so-lite-agent 剥离，ADR-0037）
+├── docs/plan/                    ← 历史归档（so-lite-agent 剥离方案，ADR-0037；crate 已迁出至独立仓库）
 ├── Cargo.toml                    ← 单 crate（edition = "2024"，唯一 bin：mistake-agent GUI）
 ├── src/
 │   ├── lib.rs                    ← 库出口（kernel 公开面 + plugin 注册聚合）
@@ -204,7 +204,7 @@ mistake-agent/
 - **指令加载落地**（2026-08-10）：数据根 `AGENTS.md`（教学规则，家长/老师可编辑）全文进主模型系统提示（静态基底之后、debug 段之前，`load_agents_md`，缺失/损坏/超限 64KB 回退静态文本，路径仅由数据根拼接固定文件名）；文件保存即生效（无缓存）；设置页「教学规则」卡片经 `get_rules_status` 展示加载状态 + `open_rules_file` 一键打开编辑。
 - kernel：注册表/两段式契约（用户插件 UserPlugin + 内核插件 KernelPlugin，ADR-0035）/dispatch/loop/RPC/session 调度全链路；四服务全部生产实现——storage（文件持久化：会话 JSONL/错题 JSON/审计 JSONL 轮转）、memory（文件持久化 + MemoryHandle 事件/审计）、model（Responses API + Chat Completions，LiveSettingsModelService 热更新）、compute（BridgeCompute → GUI Pyodide）。
 - 构建期插件自动发现（ADR-0036）：插件目录 `mod.rs` 即插件描述、`disabled` 标记即禁用（不编译不注册）；插件开发手册 + 参考模板（docs/plugin-dev/，复制即开工，include! 编译锚定测试保证与契约同步）。
-- **ADR-0037 剥离落地中**：M1（本仓库解耦）与 M2（本地独立 crate `so-lite-agent/`）已落地；M3 Provider 层（`register_provider` + 内置适配器）与 M4 插件手册/双插件验收已落地；M5（crates.io 发布与 mistake-agent 切换）待办，详见 [docs/plan/so-lite-agent.md](plan/so-lite-agent.md)。
+- **ADR-0037 剥离已迁出**：M1-M4 已从 mistake-agent 提取并迁出至独立 `so-lite-agent` 仓库（决策留痕见 [docs/adr/0037](adr/0037-so-lite-agent-crate-extraction.md)），mistake-agent 本仓库不再包含 `so-lite-agent/` 子目录（自 v0.1.0 起）；M5（crates.io 发布）待办，在新仓库推进。详见 [docs/plan/so-lite-agent.md](plan/so-lite-agent.md)（历史归档）。
 - DeepSeek thinking 回传修复：并行工具调用回放按调用复制 reasoning item（实测 DeepSeek 要求每个 function_call 前都有 reasoning），仍被拒时兜底剥离 reasoning + `effort=none` 重试；真实 API 复验通过。
 - 会话切换决策归主模型（ADR-0030/0032）：新消息先判断是否切换上下文、回合内 session::switch、回合末 LlmTurnDecider；消息树编辑/切分支（derive_branch/switch_branch）、上下文压缩（75% 阈值、最近 15 条保留）、InterruptBus 回合边界消费全部落地；审计记录点补齐（含 SessionSwitched/Memory*/SettingsChanged/Interrupt/MessageEdited/BranchSwitched）。
 - 聊天页上下文缓存命中率（ADR-0033）：get_cache_stats 按会话 + 全局聚合主模型回合 usage（Responses `cached_tokens` / Chat Completions `prompt_cache_*`）；真实链路实测命中率 97.3%（命中 4864 / 未命中 190 tokens）。
@@ -231,7 +231,7 @@ mistake-agent/
 | M5 | 消息树 / 记忆路由 / 设置向导 / 审计日志 | ✅ 完成：编辑/切分支、memory 工具、设置页、审计补全 |
 | M6 | Windows 打包 + 测试 + 文档 | ✅ 完成：142 单测 + 真实 API 链路 + 文档同步；Windows setup.exe 安装运行实测通过（2026-08-09） |
 
-后续计划：**M7 = Agent core 剥离为 `so-lite-agent` crate**（ADR-0037，进行中）——M1-M4 已落地，M5 待办；参考 Pi 分层，开箱即用，内核/用户插件由使用方编写；实施顺序见 [docs/plan/so-lite-agent.md](plan/so-lite-agent.md)。
+**已迁出（不再跟踪）**：Agent core 已按 ADR-0037 提取为独立 `so-lite-agent` crate 仓库，M1-M4 已落地并迁出（v0.1.0 起 mistake-agent 不再包含 `so-lite-agent/`）；M5（crates.io 发布）在新仓库推进。剥离过程的历史归档与 Pi 分层参照见 [docs/plan/so-lite-agent.md](plan/so-lite-agent.md) 与 [docs/adr/0037](adr/0037-so-lite-agent-crate-extraction.md)。
 
 产品路线图（规划中，未排期）：
 
