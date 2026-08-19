@@ -49,25 +49,22 @@ jobs:
         # tauri-cli 是独立 crate，`cargo install` 每次编 2-3 min。
         # 按 runner OS 缓存到 ~/.cargo/bin/tauri[.exe]；key 固定为 2.x，
         # 想强制 invalidate 时改 -v1 → -v2。
+        # 跨平台：靠 actions/cache 的 `outputs.cache-hit` 判定是否要 install，
+        # 不写 shell 脚本（避免 Windows pwsh / Linux bash 语法差异）。
+        id: tauri-cache
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/bin/tauri
             ~/.cargo/bin/tauri.exe
           key: tauri-cli-${{ runner.os }}-2.x-v1
-          restore-keys: |
-            tauri-cli-${{ runner.os }}-
 
       - name: Install tauri-cli (skip if cached)
-        # `cargo install` 总是重编；用 PATH check 跳过 cache hit。
         # `cargo tauri build` 在 `make bundle` 中调用；runner 默认没装 tauri-cli，
         # 需 cargo install（Cargo.toml 只包含 tauri-build 作为 build dep）。
-        run: |
-          if ! command -v tauri &> /dev/null; then
-            cargo install tauri-cli --version "^2.0"
-          else
-            echo "tauri-cli already cached at $(command -v tauri), skip install"
-          fi
+        # cache-hit == 'true' 时 skip → 暖启省 2-3 min。
+        if: steps.tauri-cache.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "^2.0"
 
       - name: Install Node.js
         uses: actions/setup-node@v4
