@@ -47,18 +47,21 @@ jobs:
 
       - name: Cache tauri-cli binary
         # tauri-cli 是独立 crate，`cargo install` 每次编 2-3 min。
-        # 按 runner OS 缓存到 ~/.cargo/bin/tauri[.exe]；key 固定为 2.x，
-        # 想强制 invalidate 时改 -v1 → -v2。
-        # 跨平台：靠 actions/cache 的 `outputs.cache-hit` 判定是否要 install，
+        # 按 runner OS 缓存；key 固定为 2.x，想强制 invalidate 时改 -v1 → -v2。
+        # 跨平台：靠 actions/cache 的 `outputs.cache-hit` 判定，
         # 不写 shell 脚本（避免 Windows pwsh / Linux bash 语法差异）。
         #
         # path 用 OS 条件分支：actions/cache 的语义是 list 里所有路径都存在
-        # 才保存；列两个（tauri + tauri.exe）→ 各自平台有一个不存在 →
-        # "Path Validation Error"，不保存。所以单平台只列一个。
+        # 才保存；列两个 → 各自平台有一个不存在 → "Path Validation Error"，
+        # 不保存。所以单平台只列一个。
+        #
+        # 关键：`cargo install tauri-cli` 装的是 cargo 子命令二进制
+        # `cargo-tauri[.exe]`，不是 `tauri[.exe]`。`cargo tauri build` 通过
+        # cargo 子命令机制自动找它。`tauri` 单独可执行不存在。
         id: tauri-cache
         uses: actions/cache@v4
         with:
-          path: ${{ runner.os == 'Windows' && '~/.cargo/bin/tauri.exe' || '~/.cargo/bin/tauri' }}
+          path: ${{ runner.os == 'Windows' && '~/.cargo/bin/cargo-tauri.exe' || '~/.cargo/bin/cargo-tauri' }}
           key: tauri-cli-${{ runner.os }}-2.x-v1
 
       - name: Install tauri-cli (skip if cached)
@@ -69,15 +72,17 @@ jobs:
         run: cargo install tauri-cli --version "^2.0"
 
       - name: Verify tauri-cli install
-        # 诊断：cargo install 跑完 tauri 二进制到底在哪、能否直接 invoke。
-        # 失败也不会 fail step（CI 还能继续看 make bundle 报错）。
+        # 诊断：cargo install 跑完 cargo-tauri 到底装到哪、cargo tauri --version
+        # 能否 invoke。`continue-on-error` 是为了不让 verify 把 job 红掉——
+        # 真坏了 make bundle 自己会报"no such command"。
         if: steps.tauri-cache.outputs.cache-hit != 'true'
+        shell: bash
+        continue-on-error: true
         run: |
-          echo "--- which/where tauri ---"
-          which tauri 2>&1 || echo "WARN: tauri not in PATH"
-          tauri --version 2>&1 || echo "WARN: tauri --version failed"
+          echo "--- cargo tauri --version ---"
+          cargo tauri --version 2>&1 || echo "WARN: cargo tauri --version failed"
           echo "--- ls ~/.cargo/bin/ ---"
-          ls -la ~/.cargo/bin/ 2>&1 | head -20 || echo "WARN: cannot list ~/.cargo/bin/"
+          ls -la ~/.cargo/bin/cargo-tauri* 2>&1 || echo "WARN: no cargo-tauri* in ~/.cargo/bin/"
 
       - name: Install Node.js
         uses: actions/setup-node@v4
