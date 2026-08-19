@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    # 允许在 GitHub Actions UI 手动触发（用于修复 CI 后重跑，无需删 tag）
 
 permissions:
   contents: write
@@ -108,9 +110,34 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }} (early test build)
           draft: true
-          generate_release_notes: true
+          # 不使用 generate_release_notes —— 显式 body 更显眼地放 alpha 警告
+          generate_release_notes: false
+          body: |
+            ## ⚠️ v0.1.0-alpha — 早期测试版
+
+            **这是 Mistake Agent v2 的首个 alpha 预发布**。可能随时崩溃、数据可能丢失、
+            API 与功能会在 v0.2.0 大幅调整。**不建议在生产环境或重要数据上使用**。
+
+            ### 本版本内容
+
+            - Windows NSIS 安装包：`mistake-agent_0.1.0_x64-setup.exe`
+            - Linux AppImage + .deb
+            - 源码：tag `v0.1.0-alpha`（commit 见链接的 commits tab）
+
+            ### 详细变更与已知限制
+
+            见 [CHANGELOG.md](https://github.com/kanaD3-Chan/mistake-agent/blob/v0.1.0-alpha/CHANGELOG.md)：
+            - **Added**：5 个学习场景接入、kernel 完整栈、Windows 安装包实测、43 条 ADR
+            - **Removed**：`so-lite-agent/` 已迁出至独立仓库
+            - **Security & privacy**：AGPL-3.0；settings.json 明文存 API key（已知取舍）
+            - **Known limitations**：场景 3/4/5 为 MVP 深度；错题存储/事件流/掌握度调度未做（v0.2.0 推进）
+
+            ### 反馈问题
+
+            走 [GitHub Issues](https://github.com/kanaD3-Chan/mistake-agent/issues)，
+            请附 OS / 版本 / 复现步骤。
           fail_on_unmatched_files: true
           files: |
             artifacts/**/*.AppImage

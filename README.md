@@ -1,5 +1,8 @@
 # 错题 Agent（Mistake Agent v2）
 
+> [!WARNING]
+> **v0.1.0-alpha 测试版**。这是 Mistake Agent v2 的首个 alpha 预发布，面向愿意参与早期测试、能反馈 bug 的用户。**不保证稳定，可能随时崩溃**；数据可能丢失；API 与功能会在 v0.2.0 大幅调整。**不建议在生产环境或重要数据上使用**。当前 tag `v0.1.0-alpha` 对应源码可在 Releases 页面下载 AppImage（Linux）与 NSIS 安装包（Windows）。反馈与 issue 走 GitHub Issues。
+
 面向中学生的**本地智能错题管理 + 辅助学习 Agent**：上传图片/PDF，先读图再按你的意图行动——讲解题目或判分归档错题，还能生成变式练习、周复盘报告、组卷与掌握度追踪。桌面应用（Tauri + Vue），数据与模型密钥全部保存在本机。
 
 ## 功能

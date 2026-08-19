@@ -1,5 +1,8 @@
 # Changelog
 
+> [!WARNING]
+> **当前发布是 v0.1.0-alpha（首个 alpha 测试版）**：可能随时崩溃、数据可能丢失、API 与功能在 v0.2.0 会大幅调整。**不建议在生产环境或重要数据上使用**。`v0.1.0-alpha` 范围仅做架构里程碑落定（见下） + 五个产品场景 MVP 接入；深度增强、bug 修复、稳定性改进在后续版本。请通过 GitHub Issues 反馈问题。
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
