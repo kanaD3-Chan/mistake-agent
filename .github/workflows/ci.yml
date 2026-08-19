@@ -74,6 +74,12 @@ jobs:
       - name: Verify tools
         run: make check-tools
 
+      - name: Build frontend
+        # tauri::generate_context!() 编译期需要 web/dist 存在 (proc macro 嵌入
+        # 前端资源)，必须先于 cargo test / clippy。Makefile 增量，cache hit
+        # 时是 no-op；冷启要拉 Pyodide 离线 wheel ~30-60s。
+        run: make build-frontend
+
       - name: cargo fmt --check
         run: cargo fmt --check
 
@@ -82,9 +88,6 @@ jobs:
 
       - name: cargo clippy
         run: cargo clippy --all-targets --locked -- -D warnings
-
-      - name: Build frontend
-        run: make build-frontend
 
       - name: Build Rust release
         run: make build-rust
