@@ -32,6 +32,24 @@ pub enum AuditRecord {
         archived: Option<String>,
         summary_attached: bool,
     },
+    /// 用户切换会话（会话列表点击）：目标会话成为唯一 Active。
+    SessionOpened {
+        session: String,
+    },
+    /// 会话重命名（用户改名或模型标题生成后的落盘）。
+    SessionRenamed {
+        session: String,
+        title: String,
+    },
+    /// 会话删除（GUI 删除入口，不可恢复）。
+    SessionDeleted {
+        session: String,
+    },
+    /// 首回合结束后由模型生成的会话标题。
+    SessionTitleGenerated {
+        session: String,
+        title: String,
+    },
     MemoryWrite {
         path: String,
     },

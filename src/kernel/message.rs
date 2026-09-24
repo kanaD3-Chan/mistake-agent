@@ -192,3 +192,22 @@ pub fn append_to_path(messages: &mut Vec<Message>, mut msg: Message) {
     msg.parent_id = messages.last().map(|m| m.id);
     messages.push(msg);
 }
+
+/// 用户可见文本：`display_text`（前端展示文案）非空时优先，否则回退 `text`。
+///
+/// forced_tool 场景下 `text` 是发给模型的指令（"请调用工具 X 处理当前请求。"），
+/// `display_text` 才是学生看到的那句话——派生会话标题一类**给人看**的文本时要用后者，
+/// 否则标题会变成一串工具指令。非 User/System 消息无此机制，返回 `None`。
+pub fn visible_text(msg: &Message) -> Option<&str> {
+    let (text, display): (&str, Option<&String>) = match &msg.kind {
+        MessageKind::User {
+            text, display_text, ..
+        }
+        | MessageKind::System { text, display_text } => (text, display_text.as_ref()),
+        _ => return None,
+    };
+    display
+        .map(String::as_str)
+        .filter(|d| !d.trim().is_empty())
+        .or(Some(text))
+}

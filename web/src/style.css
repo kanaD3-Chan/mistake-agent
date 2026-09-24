@@ -147,76 +147,84 @@ textarea {
   height: 100%;
 }
 
-/* ---- Sidebar: icon-only drawer (Gemini-style) ---- */
+/* ---- Sidebar: 常驻左侧栏（品牌 + 导航 + 会话列表 + 状态） ---- */
 
 .sidebar {
-  width: 72px;
-  flex: 0 0 72px;
+  width: 260px;
+  flex: 0 0 260px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 16px 8px;
+  padding: 16px;
   background: var(--color-surface);
   border-right: 1px solid var(--color-border);
-  transition:
-    width 0.28s var(--ease-out),
-    flex-basis 0.28s var(--ease-out),
-    padding 0.28s var(--ease-out);
-  overflow: hidden;
+  /* 不能 hidden：收起态下用户菜单要飞出去盖在内容区上（各文本自己 overflow: hidden）。 */
+  overflow: visible;
   z-index: 10;
+  transition:
+    width 0.18s ease,
+    flex-basis 0.18s ease;
 }
 
-.sidebar.expanded,
-.sidebar:hover {
-  width: 240px;
-  flex: 0 0 240px;
-  padding: 16px;
+/* 收起态（手动开关）：只剩图标条，文字与会话列表都让位给内容区 */
+.sidebar.collapsed {
+  width: 72px;
+  flex: 0 0 72px;
+  padding: 12px 8px;
 }
 
-.sidebar:hover .brand,
-.sidebar.expanded .brand {
-  gap: 12px;
+.sidebar.collapsed .brand {
+  flex-direction: column;
+  gap: 8px;
 }
 
-.sidebar:hover .brand-text,
-.sidebar.expanded .brand-text {
-  opacity: 1;
-  width: auto;
-  visibility: visible;
+.sidebar.collapsed .brand-text,
+.sidebar.collapsed .nav-label,
+.sidebar.collapsed .nav-item span,
+.sidebar.collapsed .new-chat span,
+.sidebar.collapsed .user-meta,
+.sidebar.collapsed .user-caret,
+.sidebar.collapsed .sidebar-sessions {
+  display: none;
 }
 
-.sidebar:hover .nav-label,
-.sidebar.expanded .nav-label {
-  opacity: 1;
-  height: auto;
+.sidebar.collapsed .nav-item {
+  justify-content: center;
+  padding: 8px;
 }
 
-.sidebar:hover .nav-item span,
-.sidebar.expanded .nav-item span {
-  opacity: 1;
-  width: auto;
+/* 收起态：图标条上的「新对话」退成和导航项一样的纯图标按钮。 */
+.sidebar.collapsed .sidebar-top .new-chat {
+  min-height: 42px;
+  padding: 8px;
+  border-color: transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  box-shadow: none;
 }
 
-.sidebar:hover .status-text,
-.sidebar.expanded .status-text,
-.sidebar:hover .privacy-note,
-.sidebar.expanded .privacy-note {
-  opacity: 1;
-  height: auto;
+/* hover：展开/收起都用「错题本 / 设置」那款淡灰底（展开态原本是 .btn.primary:hover 的
+   #333 实心 + 黑描边）。:not(:disabled) 多带一个伪类是为了压过文件后面
+   .btn.primary:hover:not(:disabled)——同权重时后者靠位置取胜，必须更重。 */
+.sidebar .sidebar-top .new-chat:hover:not(:disabled) {
+  background: var(--color-muted);
+  border-color: transparent;
+  color: var(--color-text-strong);
+  box-shadow: none;
 }
 
-.sidebar:hover .brand-lock,
-.sidebar.expanded .brand-lock {
-  display: inline-flex;
+.sidebar.collapsed .user-row {
+  justify-content: center;
+  padding: 6px 0;
 }
 
 /* Brand */
 .brand {
   display: flex;
   align-items: center;
-  gap: 0;
+  gap: 12px;
   min-height: 40px;
-  transition: gap 0.28s var(--ease-out);
 }
 
 .brand-mark {
@@ -236,12 +244,6 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 0;
-  opacity: 0;
-  width: 0;
-  visibility: hidden;
-  transition:
-    opacity 0.2s ease 0.08s,
-    visibility 0.2s ease 0.08s;
   white-space: nowrap;
   overflow: hidden;
 }
@@ -261,39 +263,33 @@ textarea {
   letter-spacing: 0.02em;
 }
 
-/* Lock button — inline with brand, right-aligned */
-.brand-lock {
-  display: none;
+/* 收起/展开开关：展开时在品牌行右端，收起后在品牌图标下方 */
+.sidebar-toggle {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
   margin-left: auto;
+  padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-weak);
   cursor: pointer;
-  flex-shrink: 0;
   transition:
     background 0.15s ease,
-    color 0.15s ease,
-    transform 0.15s var(--ease-out);
+    color 0.15s ease;
 }
 
-.sidebar.expanded .brand-lock,
-.sidebar:hover .brand-lock {
-  display: inline-flex;
-}
-
-.brand-lock:hover {
+.sidebar-toggle:hover {
   background: var(--color-muted);
   color: var(--color-text-strong);
-  transform: scale(1.08);
 }
 
-.brand-lock.locked {
-  color: var(--color-accent);
+.sidebar.collapsed .sidebar-toggle {
+  margin-left: 0;
 }
 
 /* Nav */
@@ -311,11 +307,6 @@ textarea {
   letter-spacing: 0.08em;
   color: var(--color-text-weak);
   text-transform: uppercase;
-  opacity: 0;
-  height: 0;
-  overflow: hidden;
-  transition:
-    opacity 0.2s ease 0.08s;
 }
 
 .nav-item {
@@ -338,14 +329,6 @@ textarea {
     color 0.15s ease;
 }
 
-/* 折叠态（无 hover 无 expanded）：居中图标 */
-.sidebar:not(:hover):not(.expanded) .nav-item {
-  justify-content: center;
-  gap: 0;
-  padding-left: 0;
-  padding-right: 0;
-}
-
 .nav-item:hover {
   background: var(--color-muted);
   color: var(--color-text-strong);
@@ -362,13 +345,11 @@ textarea {
 }
 
 .nav-item span {
-  opacity: 0;
-  width: 0;
-  transition:
-    opacity 0.2s ease 0.08s;
+  flex: 1;
+  min-width: 0;
 }
 
-/* Sidebar foot */
+/* Sidebar foot：次级导航（错题本 / 设置）+ 用户区，一起贴在底部 */
 .sidebar-foot {
   margin-top: auto;
   display: flex;
@@ -376,57 +357,147 @@ textarea {
   gap: 8px;
 }
 
-.status-pill {
+/* ---- 用户区：头像 + 昵称 + 状态，点开一个占位菜单 ---- */
+
+.user-box {
+  position: relative;
+}
+
+.user-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
   border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.user-row:hover,
+.user-row[aria-expanded="true"] {
   background: var(--color-muted);
-  font-size: 12px;
-  color: var(--color-text-weak);
-  white-space: nowrap;
 }
 
-.status-pill .dot {
-  width: 7px;
-  height: 7px;
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
   border-radius: 50%;
-  background: #94a3b8;
-  flex-shrink: 0;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: 14px;
+  font-weight: 600;
+  /* 状态信号：内核忙碌/未就绪时头像描边变化，文字状态在第二行。 */
+  box-shadow: 0 0 0 2px #94a3b8;
 }
 
-.status-pill.busy .dot {
-  background: var(--color-accent);
+.avatar.busy {
+  box-shadow: 0 0 0 2px var(--color-accent);
   animation: pulse 1.2s ease-in-out infinite;
 }
 
-.status-pill.ready .dot {
-  background: var(--color-success);
+.avatar.ready {
+  box-shadow: 0 0 0 2px var(--color-success);
 }
 
-.status-text {
-  opacity: 0;
-  height: 0;
+.user-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.user-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-strong);
+  white-space: nowrap;
   overflow: hidden;
-  transition:
-    opacity 0.2s ease 0.08s;
+  text-overflow: ellipsis;
 }
 
-.privacy-note {
-  padding: 0 4px;
-  font-size: 10px;
+.user-status {
+  font-size: 11px;
   color: var(--color-text-weak);
-  opacity: 0;
-  height: 0;
+  white-space: nowrap;
   overflow: hidden;
-  transition:
-    opacity 0.2s ease 0.08s;
+  text-overflow: ellipsis;
 }
 
-/* (brand-lock styles are now with brand above) */
+.user-caret {
+  flex: 0 0 auto;
+  color: var(--color-text-weak);
+}
 
-/* ---- Main / Topbar ---- */
+/* 菜单向上弹（用户区在侧栏底部） */
+.user-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 浮层阴影压过 .card 的（后者定义在文件更后面，靠选择器权重取胜）。 */
+.user-box .user-menu {
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+/* 收起态：图标条只有 56px 宽，菜单得飞出去，否则文字全被压扁。 */
+.sidebar.collapsed .user-menu {
+  right: auto;
+  width: 208px;
+}
+
+.user-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.user-menu-item:hover {
+  background: var(--color-muted);
+  color: var(--color-text-strong);
+}
+
+.user-menu-item.danger:hover {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.user-menu-note {
+  margin: 4px 2px 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--color-border);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-text-weak);
+}
+
+/* ---- Main ---- */
 
 .main {
   flex: 1;
@@ -435,50 +506,6 @@ textarea {
   flex-direction: column;
   position: relative;
   z-index: 1;
-}
-
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
-  padding: 12px var(--space-xl);
-  border-bottom: 1px solid var(--color-border);
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(12px);
-}
-
-.topbar-title {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.topbar h1 {
-  font-family: var(--font-display);
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--color-text-strong);
-  line-height: 1.2;
-  letter-spacing: -0.02em;
-}
-
-.topbar-sub {
-  font-size: 12px;
-  color: var(--color-text-weak);
-}
-
-.topbar-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 14px;
-  border-radius: var(--radius-pill);
-  background: var(--color-muted);
-  color: var(--color-text-weak);
-  font-size: 12px;
-  font-weight: 500;
-  border: 1px solid var(--color-border);
 }
 
 .view-host {
@@ -925,13 +952,24 @@ textarea {
 
 .chat-page {
   display: flex;
+  flex-direction: row;
+  height: 100%;
+}
+
+/* 聊天区（会话列表在应用侧栏，这里只剩聊天本身）：顶栏 + 消息区 + 输入区 */
+.chat-col {
+  display: flex;
   flex-direction: column;
+  flex: 1;
+  min-width: 0;
   height: 100%;
 }
 
 .chat-topbar {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-sm);
   padding: 10px var(--space-2xl) 0;
 }
 
@@ -2902,59 +2940,96 @@ textarea {
   flex-wrap: wrap;
 }
 
-/* ---------- 8. 会话历史 ---------- */
+/* ---------- 8. 会话列表（应用侧栏内，常驻） ---------- */
 
-.session-list {
+/* 顶部主操作：原「聊天」导航位，现在是「新对话」（建会话 + 切到聊天页）。 */
+.sidebar-top {
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
 }
 
-.session-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
+.new-chat {
   width: 100%;
-  padding: 16px 18px;
-  border: 1px solid var(--color-border);
-  text-align: left;
-  transition:
-    box-shadow 0.2s ease,
-    transform 0.2s var(--ease-out),
-    border-color 0.2s ease;
+  justify-content: center;
 }
 
-.session-row:hover {
-  box-shadow: var(--shadow-md);
-  transform: translateY(-1px);
-  border-color: #cbd5e1;
+/* 挂点：主操作与底部次级导航之间，吃掉剩余高度（列表长了就在这里面滚）。 */
+.sidebar-sessions {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin-top: 6px;
 }
 
-.session-row-main {
+.session-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.session-panel-error {
+  margin: 0 0 var(--space-sm);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-soft);
+  color: var(--color-danger-ink);
+  font-size: 12px;
+}
+
+.session-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 0 var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.session-panel-empty {
+  padding: var(--space-lg) var(--space-sm);
+  font-size: 13px;
+  text-align: center;
+}
+
+.session-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-width: 0;
+  gap: var(--space-2xs);
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  border-left: 2px solid transparent;
 }
 
-.session-row-main > div {
-  min-width: 0;
-}
-
-.session-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  flex: 0 0 40px;
-  border-radius: 12px;
+.session-item:hover {
   background: var(--color-muted);
-  color: var(--color-text);
 }
 
-.session-goal {
+.session-item.active {
+  background: var(--color-primary-soft);
+  border-left-color: var(--color-accent);
+}
+
+.session-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 6px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-item-title {
+  max-width: 100%;
+  font-size: 13px;
   font-weight: 600;
   color: var(--color-text-strong);
   overflow: hidden;
@@ -2962,46 +3037,65 @@ textarea {
   white-space: nowrap;
 }
 
-.back {
-  margin-bottom: var(--space-md);
+.session-item-time {
+  font-size: 11px;
 }
 
-.session-meta {
+.session-item-actions {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-sm);
-  margin-bottom: var(--space-md);
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
 }
 
-.session-detail {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
+.session-item:hover .session-item-actions,
+.session-item.active .session-item-actions {
+  opacity: 1;
 }
 
-.session-msg {
-  display: flex;
-  gap: 10px;
-  padding: 12px 14px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
+.session-rename {
+  flex: 1;
+  min-width: 0;
+  margin: 4px 2px;
+  padding: 6px 8px;
+  font-size: 13px;
 }
 
-.session-msg .msg-kind-icon {
-  margin-top: 2px;
+/* 会话边界分隔气泡（「上一会话梗概」节点，每条拆分会话的首条消息） */
+.session-divider {
+  align-self: stretch;
+  font-size: 12px;
   color: var(--color-text-weak);
 }
 
-.session-msg .md-body {
-  font-size: 14px;
+.session-divider summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--color-muted);
+  cursor: pointer;
+  list-style: none;
 }
 
-.session-msg .is-tool {
-  color: var(--color-text);
-  font-size: 13px;
+.session-divider summary::-webkit-details-marker {
+  display: none;
 }
+
+.session-divider-body {
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
 
 /* ---------- 9. Markdown + KaTeX ---------- */
 
@@ -3100,26 +3194,16 @@ textarea {
 
 /* ---------- 10. 响应式 ---------- */
 
-/* Tablet: 768-1024px — sidebar stays icon-only, cards adjust */
+/* Tablet: 768-1024px — sidebar narrows but stays readable, cards adjust */
 @media (max-width: 1024px) {
   .sidebar {
-    width: 72px;
-    flex: 0 0 72px;
-    padding: 12px 8px;
-  }
-
-  .sidebar.expanded {
-    width: 220px;
-    flex: 0 0 220px;
+    width: 232px;
+    flex: 0 0 232px;
     padding: 12px;
   }
 
   .page {
     padding: var(--space-lg);
-  }
-
-  .topbar {
-    padding: 10px var(--space-lg);
   }
 
   .mistake-grid {
@@ -3153,24 +3237,35 @@ textarea {
     gap: 0;
   }
 
-  .sidebar.expanded,
-  .sidebar:hover {
+  /* 底部标签栏没有「图标条」这回事：收起态与开关一并失效，避免留下半截状态。 */
+  .sidebar.collapsed {
     width: 100%;
     flex: 0 0 auto;
     padding: 8px 12px;
   }
 
+  .sidebar .sidebar-toggle {
+    display: none;
+  }
+
   .sidebar .brand,
-  .sidebar .sidebar-foot,
+  .sidebar .sidebar-top,
   .sidebar .nav-label,
-  .sidebar .nav-item span,
   .sidebar .brand-text,
-  .sidebar .brand-lock {
+  .sidebar .sidebar-sessions,
+  .sidebar .user-box {
     display: none;
   }
 
   .sidebar .brand-mark {
     display: none;
+  }
+
+  /* 底部标签栏只留次级导航（错题本 / 设置）：nav 现在住在 sidebar-foot 里。 */
+  .sidebar .sidebar-foot {
+    margin-top: 0;
+    flex-direction: row;
+    gap: 4px;
   }
 
   .sidebar .nav {
@@ -3187,31 +3282,9 @@ textarea {
     border-radius: var(--radius-sm);
   }
 
-  .sidebar .nav-item span {
-    opacity: 1;
-    width: auto;
-  }
-
   .main {
     flex: 1;
     min-height: 0;
-  }
-
-  .topbar {
-    padding: 10px var(--space-md);
-  }
-
-  .topbar h1 {
-    font-size: 16px;
-  }
-
-  .topbar-sub {
-    display: none;
-  }
-
-  .topbar-tag {
-    font-size: 10px;
-    padding: 4px 10px;
   }
 
   .page {
@@ -3322,14 +3395,6 @@ textarea {
 @media (max-width: 480px) {
   .stat-strip {
     grid-template-columns: 1fr;
-  }
-
-  .topbar-tag {
-    display: none;
-  }
-
-  .topbar h1 {
-    font-size: 15px;
   }
 }
 

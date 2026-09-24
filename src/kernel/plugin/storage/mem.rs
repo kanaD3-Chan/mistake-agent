@@ -213,6 +213,19 @@ impl SessionStore for MemoryStorage {
         Ok(())
     }
 
+    async fn set_title(&self, key: &SessionKey, title: Option<&str>) -> Result<(), StorageError> {
+        let mut inner = self.inner.lock().expect("storage poisoned");
+        let meta = inner
+            .sessions
+            .get_mut(key)
+            .ok_or(StorageError::SessionNotFound(*key))?;
+        meta.title = title
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string);
+        Ok(())
+    }
+
     async fn archive(&self, key: &SessionKey) -> Result<(), StorageError> {
         let mut inner = self.inner.lock().expect("storage poisoned");
         let meta = inner
@@ -221,6 +234,26 @@ impl SessionStore for MemoryStorage {
             .ok_or(StorageError::SessionNotFound(*key))?;
         meta.status = SessionStatus::Archived;
         meta.archived_at = Some(chrono::Utc::now());
+        Ok(())
+    }
+
+    async fn activate(&self, key: &SessionKey) -> Result<(), StorageError> {
+        let mut inner = self.inner.lock().expect("storage poisoned");
+        let meta = inner
+            .sessions
+            .get_mut(key)
+            .ok_or(StorageError::SessionNotFound(*key))?;
+        meta.status = SessionStatus::Active;
+        meta.archived_at = None;
+        Ok(())
+    }
+
+    async fn remove_session(&self, key: &SessionKey) -> Result<(), StorageError> {
+        let mut inner = self.inner.lock().expect("storage poisoned");
+        if inner.sessions.remove(key).is_none() {
+            return Err(StorageError::SessionNotFound(*key));
+        }
+        inner.messages.remove(key);
         Ok(())
     }
 

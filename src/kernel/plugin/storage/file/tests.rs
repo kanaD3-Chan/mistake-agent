@@ -149,3 +149,45 @@
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    // ---------- 会话元数据：标题 / 激活 / 删除（ADR-0044 收尾） ----------
+
+    #[tokio::test]
+    async fn session_title_activate_and_remove_roundtrip() {
+        use crate::kernel::agent::session::{SessionKey, SessionMeta, SessionStatus};
+        use crate::kernel::plugin::services::SessionStore;
+
+        let dir = temp_root("session-ops");
+        std::fs::create_dir_all(dir.join("sessions")).unwrap();
+        let store = real_store(&dir);
+        let key = SessionKey::new();
+        let mut meta = SessionMeta::new(key);
+        meta.status = SessionStatus::Archived;
+        meta.archived_at = Some(chrono::Utc::now());
+        store.create_session(&key, &meta).await.unwrap();
+
+        // set_title：写盘可回读；空白串按清空处理。
+        store.set_title(&key, Some("  线性代数复习  ")).await.unwrap();
+        assert_eq!(
+            store.get_session(&key).await.unwrap().unwrap().title.as_deref(),
+            Some("线性代数复习")
+        );
+        store.set_title(&key, Some("   ")).await.unwrap();
+        assert!(store.get_session(&key).await.unwrap().unwrap().title.is_none());
+
+        // activate：状态复位为 Active 且清空归档时间。
+        store.activate(&key).await.unwrap();
+        let meta = store.get_session(&key).await.unwrap().unwrap();
+        assert_eq!(meta.status, SessionStatus::Active);
+        assert!(meta.archived_at.is_none());
+
+        // remove_session：连 jsonl 文件一起删；重复删除报错。
+        let path = dir.join("sessions").join(format!("{key}.jsonl"));
+        assert!(path.exists());
+        store.remove_session(&key).await.unwrap();
+        assert!(store.get_session(&key).await.unwrap().is_none());
+        assert!(store.read_all(&key).await.unwrap().is_empty());
+        assert!(!path.exists(), "会话文件应一并删除");
+        assert!(store.remove_session(&key).await.is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }

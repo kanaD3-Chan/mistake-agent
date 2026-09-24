@@ -4,6 +4,8 @@
 状态：已采纳
 取代：ADR-0030 / ADR-0032 / ADR-0034（及 ADR-0006「不新建 SessionKey、不归档」的结论、ADR-0025 守卫模型的最后一处残留）
 
+**修订（2026-09-23）**：本次决策的**收尾**已落地——原文「不在本次范围」的两项（前端会话列表 UI、存量数据迁移）与「待定」项（会话内版本切换）均已闭环。新增 RPC `open_session` / `rename_session` / `delete_session`；`SessionMeta` 新增 `title`（用户可见标题，首回合末由模型异步生成，`LlmTitler`）；新增事件 `Event::SessionTitleUpdated` 与审计 `SessionOpened` / `SessionRenamed` / `SessionDeleted` / `SessionTitleGenerated`；存量数据在 `FileStorage::open` 时按「上一会话梗概：」边界拆分为独立会话（幂等 + `.bak`，见 [file/migrate.rs](../../src/kernel/plugin/storage/file/migrate.rs)）；前端删除「会话」页，改为应用侧栏内常驻的会话列表。第 4 条决策（空闲超时仅提示）与本文其余结论不变。
+
 ## 背景
 
 ADR-0006 当初明确否决了用户显式会话管理，理由是不给用户增加负担：会话切换交给模型判断，且**不新建 SessionKey、不归档**——"切换"实为同一 `SessionKey` 内的树内分叉，挂一个「上一会话梗概」摘要节点，旧分支保留为兄弟版本（ADR-0030）。
@@ -38,7 +40,7 @@ ADR-0006 当初明确否决了用户显式会话管理，理由是不给用户�
 
 ## 影响
 
-- **存量数据**：删除 `scope_session_context` 后，既有树结构会话（含摘要节点）会把整条路径原样送给模型——摘要节点与其祖先消息内容重复，token 上升，模型可能把旧目标当成当前目标。数据本身不受影响（不报错、不缺字段），**无需迁移**；用户新建会话即可绕开。这是本次明确接受的代价。
-- 审计记录 `SessionSwitched` → `SessionCreated { session, archived, summary_attached }`；事件 `SessionSwitched` → `SessionIdle`。
-- 前端会话列表 UI 与存量数据迁移不在本次范围，见 [docs/TODO.md](../TODO.md)。
+- **存量数据（2026-09-23 已迁移）**：删除 `scope_session_context` 后，既有树结构会话（含摘要节点）会把整条路径原样送给模型——摘要节点与其祖先消息内容重复，token 上升，模型可能把旧目标当成当前目标。原文结论为「数据本身不受影响、无需迁移，用户新建会话即可绕开」；收尾时改为**主动迁移**：`FileStorage::open` 加载会话前按「上一会话梗概：」边界把多话题文件拆成独立会话（本地 `0ad77bb4….jsonl` 的 152 条消息拆成 22 条会话），原文件改名 `<key>.jsonl.bak` 完整保留可回退，`.bak` 非 `.jsonl` 故二次启动幂等；含老 `active_path` 的段继承老状态，不新增 Active。迁移非致命，失败只 `log::warn` 并留原文件待下次重试。
+- 审计记录 `SessionSwitched` → `SessionCreated { session, archived, summary_attached }`；事件 `SessionSwitched` → `SessionIdle`。收尾新增审计 `SessionOpened` / `SessionRenamed` / `SessionDeleted` / `SessionTitleGenerated`，新增事件 `Event::SessionTitleUpdated`。
+- 前端会话列表 UI 与存量数据迁移**已在收尾中补齐**（2026-09-23），见 [docs/TODO.md](../TODO.md) 第 1 项与文首修订注。会话内消息版本切换（`edit_message` + `switch_branch`）明确**保留**，限定为「会话内版本浏览」，不再承担会话边界语义。
 - 文档同步：`docs/api.md`、`docs/prompts.md`、`docs/kernel-dev.md`、`docs/testing.md`、`docs/plugin-dev/kernel.md`、`PROJECT.md`、`CONTEXT.md`、`README.md`、`AGENTS.md`、`CHANGELOG.md`，以及被取代/受影响的 ADR 0006 / 0013 / 0017 / 0023 / 0025 / 0030 / 0032 / 0034 / 0035（均在文首加修订注或更新状态行）。

@@ -10,7 +10,7 @@
 4. **不泄露思维链**：reasoning 不进学生可见内容（UI 侧默认折叠仅为调试/透明）。
 5. **输出结构化**：判分用 json_schema 强约束（服务端强制数组结构），不靠"请输出 JSON"的软约束。
 6. **理解不判分**：图片理解按图片类型处理——作业/试卷转写文字，角色/照片等其它图片描述内容（用户明确要求），判分交给主模型。
-7. **语言跟随**：`english_mode=true` 时，主对话、判分、出题、即时批改、图片理解、会话决策与摘要等全部模型提示追加英文输出规则；GUI 文案保持中文。
+7. **语言跟随**：`english_mode=true` 时，主对话、判分、出题、即时批改、图片理解、会话标题与摘要等全部模型提示追加英文输出规则；GUI 文案保持中文。
 
 ## Prompt 清单
 
@@ -80,10 +80,19 @@ docs/variants.md 结构化规格：题目、答案、图纸三者同源）；难
 几何题必须给 diagram_spec（GeoGebra 风格 points/objects/labels），图形数据随后经
 compute::verify（Pyodide）做可解性对拍，失败带原因重出、连续 3 次停。
 
+### 8. 会话标题提示（session_title_prompt）— ADR-0044 收尾
+
+`LlmTitler`（`src/kernel/agent/session/title.rs`）在**首回合结束、`TurnEnd` 已发出之后**的独立任务里调用，给侧栏会话起名：
+输入是已落盘的消息（≤4000 字截断），要求一句话（≤12 字）概括这次对话要解决的事，保留学科/知识点，不要引号/句号/「会话」类前缀；
+超时 20s、重试 1 次，失败或空串降级为**首条用户消息的可见文本前 40 字**（`fallback_title`；forced_tool 消息取 `display_text` 而非给模型的指令文本），绝不因辅助调用失败影响主链路。
+`english_mode=true` 时追加 `ENGLISH_TITLE_RULE`（≤6 words，只输出标题本身）。
+只在 `title` 为空时触发一次：用户 `rename_session` 改过的名字不会被下一回合覆盖（写回前再查一次，防模型调用期间用户已改名）。
+
 ## 迭代记录
 
 | 日期 | 变更 | 原因/结果 |
 |---|---|---|
+| 2026-09-23 | 新增会话标题提示（`session_title_prompt` + `ENGLISH_TITLE_RULE`） | ADR-0044 收尾：侧栏会话名由模型按首条消息生成（≤12 字、无引号/句号/前缀），失败降级为首条用户消息的可见文本前 40 字；已有标题（含用户改名）不再调模型 |
 | 2026-09-23 | `vision_prompt` / `grading_system_prompt` 退役；新增常驻 `GRADING_GUIDANCE`；系统提示作业流程改为「直读图片/PDF 正文 → grading__upload(items)」 | ADR-0046：图片直入上下文，grading 只归档 |
 | 2026-09-23 | 图片理解改由 `deepseek-flash` 承担（Responses `input_image`） | 视觉端点退役（ADR-0045）：单份 DeepSeek 配置同时负责对话、判分与图片理解 |
 | 2026-09-21 | `turn_decider_prompt` / `ENGLISH_DECIDER_RULE` 删除 | 模型自动切换整体下线（ADR-0044）：会话新建改由用户发起，提示词与三动作决策一并退役 |

@@ -115,8 +115,9 @@ export function navigateBranch(view, messageId, dir = 1) {
 
 /**
  * 会话视图 → 前端气泡：只渲染活跃链（一次一个版本，DeepSeek 式）。
- * opts.history=true（会话历史页）保留 system 消息完整原文；聊天流（默认）中
- * 会话切换摘要只显示一次「会话已切换」。每个气泡带版本元数据供 < / > 使用。
+ * 系统消息中：`交接摘要：`（迁移前旧会话尾标记）隐藏；`上一会话梗概：`（会话边界）
+ * 渲染为折叠分隔气泡；其余保留原文，展示文本优先取 display_text。
+ * 每个气泡带版本元数据供 < / > 使用。
  */
 export function renderPath(view, opts = {}) {
   return getActiveChain(view)
@@ -179,22 +180,20 @@ export function renderPath(view, opts = {}) {
       }
       if (kind.kind === "system") {
         const raw = kind.text || "";
-        if (opts.history) {
-          // 历史页保留完整交接记录，不隐藏。
-          return { ...base, type: "system", text: raw };
+        // 老一代「旧会话尾部」标记：迁移后不再产生，历史回放一律隐藏。
+        if (/^交接摘要[:：]/.test(raw)) return null;
+        // 会话边界（交接摘要节点）：折叠分隔气泡，正文即摘要原文。
+        const boundary = raw.match(/^上一会话梗概[:：]\s*/);
+        if (boundary) {
+          return {
+            ...base,
+            type: "divider",
+            title: "上一会话梗概",
+            text: raw.slice(boundary[0].length),
+          };
         }
-        // 聊天合并流：旧会话交接摘要不渲染（新数据 display_text 为空，旧数据按前缀识别）。
-        if (kind.display_text === "" || /^交接摘要[:：]/.test(raw)) return null;
-        // 上一会话梗概（新会话子树起点）：聊天流显示为「会话已切换」
-        // （新数据取 display_text，旧数据按前缀兜底）。
-        if (kind.display_text || /^上一会话梗概[:：]/.test(raw)) {
-          return { ...base, type: "system", text: kind.display_text || "会话已切换" };
-        }
-        return {
-          ...base,
-          type: "system",
-          text: raw,
-        };
+        if (kind.display_text === "") return null;
+        return { ...base, type: "system", text: kind.display_text || raw };
       }
       if (kind.kind === "reasoning") {
         return { ...base, type: "reasoning", text: kind.text || "" };

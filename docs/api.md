@@ -36,11 +36,14 @@
 | `get_state` | — | ✅ M1 | 返回 `{status: idle\|busy, session_key}` |
 | `edit_message` | `message_id`, `text` | ✅ M5 | 消息树编辑：仅 user 消息可编辑，从被编辑消息的父节点派生新分支，返回 `{session_key, messages}`（新活跃路径）；编辑 = 改完重发，保存后自动开启新一轮回答 |
 | `switch_branch` | `message_id` | ✅ M5 | 消息树切分支：设置 active_path，返回 `{session_key, messages}` |
-| `get_settings` | — | ✅ M2/M5 | 返回设置公开视图（**不含 api_key**，只含 `key_set` 标记；含 `english_mode`） |
-| `set_settings` | `patch` | ✅ M2/M5 | 应用设置补丁并持久化（含 `english_mode`）；模型配置变化时热替换模型服务；成功后发 `settings_changed` 事件 |
-| `list_sessions` | — | ✅ M5 | 返回 `{sessions:[{key,goal,status,created_at,last_activity_at}]}` |
+| `get_settings` | — | ✅ M2/M5 | 返回设置公开视图（**不含 api_key**，只含 `key_set` 标记；含 `english_mode` / `nickname`） |
+| `set_settings` | `patch` | ✅ M2/M5 | 应用设置补丁并持久化（含 `english_mode` / `nickname`，后者空串=清空）；模型配置变化时热替换模型服务；成功后发 `settings_changed` 事件 |
+| `list_sessions` | — | ✅ M5 | 返回 `{sessions: [SessionMeta]}`（`key` / `goal` / `title?` / `status` / `created_at` / `last_activity_at` / `active_path`；`title` 缺失时省略，见 §7） |
 | `read_session` | `key` | ✅ M5 | 返回 `{meta,messages}`（会话历史/消息树完整记录） |
 | `create_session` | `carry_summary?: bool`, `goal?: string` | ✅ | 用户手动新建会话（ADR-0044）：归档当前活动会话并开启全新独立 `SessionKey`，返回 `{session_key, archived_session_key, summary_attached}`；`carry_summary` 显式控制是否把旧会话摘要作为新会话首条 system 消息；回合在飞时拒绝（`turn_in_progress`） |
+| `open_session` | `key` | ✅ | 用户点击列表切换会话：归档全部活动会话 → 激活 `key`，返回 `{session_key}`；会话不存在报 `scheduler_error`；回合在飞时拒绝（`turn_in_progress`）。切换不算发言，不改 `last_activity_at`（空闲判定依赖它） |
+| `rename_session` | `key`, `title` | ✅ | 用户重命名：`title` 两端空白裁掉后写盘，空串 = 清空（下一回合末可由模型重新生成）；返回 `{session_key, title}`（清空时 `title` 为 `null`）；不设回合守卫——改名不影响在飞回合；记审计 `session_renamed` 并（非空时）发 `session_title_updated` |
+| `delete_session` | `key` | ✅ | 删除会话（含 JSONL 文件）；若删的是当前活动会话则随后补建一条空会话以保住单 Active 不变量，返回 `{replacement_session_key}`（未补建时 `null`）；记审计 `session_deleted`；回合在飞时拒绝（`turn_in_progress`） |
 | `compute_result` | `compute_id`, `stdout`, `stderr`, `duration_ms` | ✅ M4 | GUI/Pyodide 验算回执（compute 桥接）；`compute_id` 必须回填事件 `compute_request` 的 id |
 | `get_rules_status` | — | ✅ | 返回 `{loaded: bool, path, reason?, bytes?}`：数据根 AGENTS.md 教学规则加载状态（`reason` = `missing`/`too_large`/`invalid_utf8`，缺失/损坏/超限时系统提示已回退静态文本） |
 
@@ -55,7 +58,7 @@
 {"type":"response","id":1,"error":{"code":"turn_in_progress","message":"当前有回合在跑，请先停止再发送新消息"}}
 ```
 
-`result` 与 `error` 二选一。错误码：`turn_in_progress` / `scheduler_error` / `tool_error` / `settings_error` / `not_implemented`。
+`result` 与 `error` 二选一。主要错误码：`turn_in_progress` / `scheduler_error` / `storage_error` / `tool_error` / `unknown_tool` / `invalid_params` / `branch_error` / `invalid_settings` / `connection_failed` / `not_implemented`。
 
 ### 2.3 事件帧（kernel → GUI，无 id）
 
@@ -72,6 +75,7 @@
 | `compute_request` | `id`, `code` | kernel → GUI：请求在 Pyodide 执行端运行 Python，GUI 回 `compute_result` |
 | `turn_end` | `stop_reason` | `natural` / `tool_call_limit` / `consecutive_failures` / `turn_timeout` / `user_aborted` / `failed` / `internal_abort`；`failed` 表示回合失败，前端恢复可聊天状态 |
 | `session_idle` | `session`, `idle_seconds` | 会话空闲超时提示（ADR-0044）：用户沉寂超过 12h 后再次发言时发出。**仅提示**，不自动切换会话——是否开新话题由用户决定 |
+| `session_title_updated` | `session`, `title` | 会话标题已更新（首回合结束后模型生成 / 用户 `rename_session`）：侧栏列表刷新用 |
 | `memory_changed` | `path` | 记忆变更 |
 | `compaction` | `session` | 上下文压缩 |
 | `error` | `message` | 错误播报 |
@@ -166,11 +170,12 @@ pub trait UserPlugin {
 {
   "log_level": "info",
   "english_mode": false,
+  "nickname": "",
   "main_model": { "api_url": "https://api.deepseek.com", "api_key": "...", "model": "deepseek-flash", "transport": "responses" }
 }
 ```
 
-`vision_model` 字段仅为兼容旧配置保留、运行时不再读取（ADR-0045）。环境变量回退：`DEEPSEEK_API_KEY` / `DEEPSEEK_API_URL` / `MISTAKE_AGENT_LOG_LEVEL`。
+`nickname` 是侧栏左下角的称呼（≤24 字符，空串=用前端默认「同学」）。`vision_model` 字段仅为兼容旧配置保留、运行时不再读取（ADR-0045）。环境变量回退：`DEEPSEEK_API_KEY` / `DEEPSEEK_API_URL` / `MISTAKE_AGENT_LOG_LEVEL`。
 
 ## 6. 超时与取消模型（ADR-0022）
 
@@ -182,13 +187,14 @@ pub trait UserPlugin {
 ## 7. 会话与消息树（ADR-0007/0044）
 
 - `SessionKey` = UUID。**会话新建只由用户发起**（ADR-0044）：经 `create_session` RPC 归档当前活动会话并开启独立 `SessionKey`。没有任何模型侧的自动判断——`SessionScheduler::on_new_message` 的预决策（原 ADR-0032）、回合末 `LlmTurnDecider`（原 ADR-0030）、`session::switch` 工具（原 ADR-0034）三处已一并删除，`GuardModel` / `turn_decider_prompt` 随之退役。
-- **单 Active 不变量**：任一时刻至多一个 `status == active` 的会话；新建会话时归档**全部** Active 会话（`MemoryStorage::list_sessions` 遍历 HashMap 顺序不定，两个 Active 会让"当前会话"变成随机）。
+- **单 Active 不变量**：任一时刻至多一个 `status == active` 的会话；新建会话（`create_session`）与切换会话（`open_session`）都归档**全部** Active 会话（`MemoryStorage::list_sessions` 遍历 HashMap 顺序不定，两个 Active 会让"当前会话"变成随机）；删除活动会话时补建一条空会话。存量迁移同样不新增 Active（见下）。
+- 会话标题：`SessionMeta.title`（`Option<String>`，旧 JSONL 无此字段仍可解析）= 侧栏展示的**用户可见标题**，与 `goal`（学习目标，摘要器输入）语义分离。首回合落盘 + `TurnEnd` 之后由独立任务异步生成（`LlmTitler` + `session_title_prompt`，≤12 字；<8 条等条件不满足则跳过），失败降级为首条用户消息前 40 字；用户可经 `rename_session` 覆盖，已有标题时不再调模型（用户改名不会被下一回合盖掉）。生成/改名后发 `session_title_updated`。
 - 交接摘要：`create_session` 的 `carry_summary` 为真且旧会话有非空内容时，把「上一会话梗概：…」（生产实现 = 主模型 + summarize_prompt 生成，<8 条消息走计数 stub 不调模型）作为**新会话首条** system 消息，后续用户消息挂在其下；旧会话本身不因携带摘要而被写入。
 - 空闲超时 12h：检测保留，但**不再自动分叉**——发 `session_idle` 事件提示用户后继续当前会话。
 - 消息气泡：一个输出 item = 一个气泡，**完成即落盘**（含 assistant 回复与工具调用）；中断只丢半截，已完整气泡保留。工具调用气泡只展示状态（工具名 + 完成/失败徽章），通用 JSON/Markdown 返回详情不再渲染；仅 practice 练习卡片、薄弱点列表等交互组件保留结果内容。
-- 消息树：`edit_message` 从被编辑消息的父节点派生新消息并更新 active_path（旧分支完整保留）；仅 user 消息可编辑（改完重发，自动重新回答），assistant 等模型消息不可编辑；`switch_branch` 切换 active_path；`read_path` 只读活跃路径，旁支不进入 LLM 上下文。
+- 消息树：`edit_message` 从被编辑消息的父节点派生新消息并更新 active_path（旧分支完整保留）；仅 user 消息可编辑（改完重发，自动重新回答），assistant 等模型消息不可编辑；`switch_branch` 切换 active_path；`read_path` 只读活跃路径，旁支不进入 LLM 上下文。分支切换**只在当前会话内**发生，不再承担会话边界语义（ADR-0044）。
 - `InterruptBus`（内部中断，ADR-0023）：环境变更信号队列（设置变更/记忆变更/压缩），RPC 回合任务在消息进入后与回合收尾后各消费一次，转成 GUI 事件并写审计。
-- **存量数据**：ADR-0044 之前产生的树结构会话（含摘要节点）会把整条路径原样送给模型——摘要节点与其祖先内容重复，token 上升。数据本身不受影响，无需迁移；用户新建会话即可绕开。
+- **存量数据已迁移**（2026-09-23，[file/migrate.rs](../src/kernel/plugin/storage/file/migrate.rs)）：ADR-0044 之前的会话由模型自动切换话题，多个话题挤在一个文件里、以「上一会话梗概：」系统消息为边界（含兄弟分支）。`FileStorage::open` 在加载会话**之前**扫描 `sessions/*.jsonl`：按边界节点切分并沿 parent 链把后代（含兄弟分支）归入最近的边界祖先 → 每段分配新 `SessionKey`、段首 `parent_id = None`、消息 id 保留 → 仅含老 `active_path` 的段继承老状态（**不新增 Active**），其余 `Archived`；随后把原文件改名为 `<key>.jsonl.bak`（完整字节，可手工回退）。`.bak` 扩展名不是 `.jsonl`，二次启动自然跳过（幂等）；任何一步失败只 `log::warn`，不阻塞启动、保留原文件待下次重试。边界判定明确排除 `上下文压缩摘要：`（压缩节点）与老一代 `交接摘要：`（旧会话尾标记）——二者不是话题边界。**是否拆分按「非空段数 ≥ 2」判定**（段数 = 边界数 + 头部非空则 1）：老数据的第一个话题可能就以边界节点开头，不能据此整篇跳过；而迁移后的每段最多含一个边界节点、必在段首，二次运行天然无可拆之段。归档段的标题取首个用户消息的**可见文本**（`display_text` 优先——forced_tool 消息的 `text` 是给模型的指令，会得到「请调用工具 X 处理当前请求。」这种标题）。迁移前的老会话会把摘要节点与其祖先内容一并送给模型（token 上升），拆分后每条会话只含一个话题。
 
 ## 8. 运行与验收
 

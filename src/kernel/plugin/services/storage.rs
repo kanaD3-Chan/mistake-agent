@@ -171,7 +171,13 @@ pub trait SessionStore: Send + Sync {
         tail_start: MessageId,
     ) -> Result<(), StorageError>;
     async fn set_goal(&self, key: &SessionKey, goal: &Goal) -> Result<(), StorageError>;
+    /// 设置用户可见标题（`None`/空串 = 清空，下次回合末可由模型重新生成）。
+    async fn set_title(&self, key: &SessionKey, title: Option<&str>) -> Result<(), StorageError>;
     async fn archive(&self, key: &SessionKey) -> Result<(), StorageError>;
+    /// 把会话重新置为活动（单 Active 不变量由调用方保证：先归档其它 Active）。
+    async fn activate(&self, key: &SessionKey) -> Result<(), StorageError>;
+    /// 删除会话及其消息（GUI 删除入口；不可恢复）。
+    async fn remove_session(&self, key: &SessionKey) -> Result<(), StorageError>;
     async fn list_sessions(&self) -> Result<Vec<SessionMeta>, StorageError>;
     async fn set_last_activity(
         &self,

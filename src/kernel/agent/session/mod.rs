@@ -58,6 +58,10 @@ pub enum SessionStatus {
 pub struct SessionMeta {
     pub key: SessionKey,
     pub goal: Option<Goal>,
+    /// 用户可见的会话标题：首回合结束后由模型按首条消息生成，用户可改名（RPC `rename_session`）。
+    /// 与 `goal`（学习目标，摘要器输入）语义分离；旧 JSONL 无此字段，解析不受影响。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub status: SessionStatus,
     pub created_at: DateTime<Utc>,
     pub archived_at: Option<DateTime<Utc>>,
@@ -71,6 +75,7 @@ impl SessionMeta {
         Self {
             key,
             goal: None,
+            title: None,
             status: SessionStatus::Active,
             created_at: now,
             archived_at: None,
@@ -84,11 +89,13 @@ mod clock;
 mod interrupt;
 mod scheduler;
 mod summarize;
+mod title;
 
 pub use clock::{Clock, FakeClock, SystemClock};
 pub use interrupt::{Interrupt, InterruptBus};
 pub use scheduler::{CreatedSession, SchedulerError, SessionScheduler, TurnContext};
 pub use summarize::{HandoffSummary, LlmSummarizer, StubSummarizer, Summarizer};
+pub use title::{LlmTitler, StubTitler, Titler};
 
 #[cfg(test)]
 mod tests {
@@ -166,6 +173,19 @@ mod tests {
         InterruptBus,
         Arc<MemoryEventSink>,
     ) {
+        setup_with_titler(Arc::new(StubTitler))
+    }
+
+    /// 自定义标题器的装配（标题用例注入 `LlmTitler`）。
+    fn setup_with_titler(
+        titler: Arc<dyn Titler>,
+    ) -> (
+        SessionScheduler,
+        FakeClock,
+        MemoryStorage,
+        InterruptBus,
+        Arc<MemoryEventSink>,
+    ) {
         let store = MemoryStorage::new();
         let clock = FakeClock::new(Utc::now());
         let bus = InterruptBus::new();
@@ -174,6 +194,7 @@ mod tests {
             Arc::new(store.clone()),
             Arc::new(clock.clone()),
             Arc::new(StubSummarizer),
+            titler,
             bus.clone(),
             events.clone(),
         );
@@ -372,6 +393,185 @@ mod tests {
             "用户消息应挂在摘要节点下"
         );
         assert!(events.take().is_empty(), "刚活动过，不应触发空闲提示");
+    }
+
+    /// 造一条助手回复：标题只在「已有用户消息 + 助手回复」时才生成。
+    async fn append_assistant(store: &MemoryStorage, key: &SessionKey, text: &str) -> Message {
+        let path = store.read_path(key).await.unwrap();
+        let mut reply = Message::assistant(text);
+        reply.parent_id = path.last().map(|m| m.id);
+        store.append_message(key, &reply).await.unwrap();
+        reply
+    }
+
+    #[tokio::test]
+    async fn title_generated_once_after_first_turn() {
+        let model = Arc::new(ScriptedModel::new(vec![Ok("线性代数错题整理".into())]));
+        let titler: Arc<dyn Titler> =
+            Arc::new(LlmTitler::new(model.clone()).with_retry(0, Duration::ZERO));
+        let (scheduler, _, store, _, _) = setup_with_titler(titler);
+        let ctx = scheduler
+            .on_new_message("帮我整理线性代数的错题")
+            .await
+            .unwrap();
+
+        // 只有用户消息：不生成（首答还没来，没有可概括的对话）。
+        assert_eq!(
+            scheduler
+                .maybe_generate_title(&ctx.session_key)
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(model.call_count(), 0);
+
+        append_assistant(&store, &ctx.session_key, "好的，先看第一题").await;
+        assert_eq!(
+            scheduler
+                .maybe_generate_title(&ctx.session_key)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("线性代数错题整理")
+        );
+        assert_eq!(
+            store
+                .get_session(&ctx.session_key)
+                .await
+                .unwrap()
+                .unwrap()
+                .title
+                .as_deref(),
+            Some("线性代数错题整理")
+        );
+        assert_eq!(model.call_count(), 1);
+
+        // 已有标题：不再调模型（用户改过的名字不会被下一回合覆盖）。
+        assert_eq!(
+            scheduler
+                .maybe_generate_title(&ctx.session_key)
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(model.call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn title_falls_back_to_truncated_first_message_on_model_error() {
+        let model = Arc::new(ScriptedModel::new(vec![
+            Err("HTTP 503 Service Unavailable".into()),
+            Err("HTTP 503 Service Unavailable".into()),
+        ]));
+        let titler: Arc<dyn Titler> =
+            Arc::new(LlmTitler::new(model.clone()).with_retry(1, Duration::ZERO));
+        let (scheduler, _, store, _, _) = setup_with_titler(titler);
+        let ctx = scheduler
+            .on_new_message("帮我整理线性代数的错题")
+            .await
+            .unwrap();
+        append_assistant(&store, &ctx.session_key, "好的").await;
+
+        // 模型失败：降级为截断的首条用户消息，绝不因辅助调用失败影响主链路。
+        assert_eq!(
+            scheduler
+                .maybe_generate_title(&ctx.session_key)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("帮我整理线性代数的错题")
+        );
+        assert_eq!(model.call_count(), 2, "1 次 + 1 次重试");
+    }
+
+    #[tokio::test]
+    async fn title_prefers_display_text_over_model_instruction() {
+        let (scheduler, _, store, _, _) = setup();
+        // forced_tool：text 是给模型的指令，display_text 才是学生看到的话。转录与兜底
+        // 标题都必须取后者，否则侧栏会出现一串「请调用工具 X 处理当前请求。」。
+        let ctx = scheduler
+            .on_new_message_with_display(
+                "请调用工具 memory::show 处理：数学/向量组的线性相关性",
+                Some("翻看记忆：数学/向量组的线性相关性"),
+            )
+            .await
+            .unwrap();
+        append_assistant(&store, &ctx.session_key, "找到了").await;
+
+        assert_eq!(
+            scheduler
+                .maybe_generate_title(&ctx.session_key)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("翻看记忆：数学/向量组的线性相关性")
+        );
+    }
+
+    #[tokio::test]
+    async fn stub_titler_falls_back_without_calling_model() {
+        let (scheduler, _, store, _, _) = setup();
+        let ctx = scheduler.on_new_message("   ").await.unwrap();
+        append_assistant(&store, &ctx.session_key, "嗯").await;
+        // 无可用文本时用固定文案兜底。
+        assert_eq!(
+            scheduler
+                .maybe_generate_title(&ctx.session_key)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("新会话")
+        );
+    }
+
+    #[tokio::test]
+    async fn open_existing_archives_previous_active_only() {
+        let (scheduler, _, store, _, _) = setup();
+        let first = scheduler.on_new_message("第一次").await.unwrap();
+        let created = scheduler.create_new_session(None, false).await.unwrap();
+        let before = store
+            .get_session(&first.session_key)
+            .await
+            .unwrap()
+            .unwrap()
+            .last_activity_at;
+
+        scheduler.open_existing(first.session_key).await.unwrap();
+
+        let metas = store.list_sessions().await.unwrap();
+        assert_eq!(
+            metas
+                .iter()
+                .filter(|m| m.status == SessionStatus::Active)
+                .count(),
+            1,
+            "切换后仍只有一条 Active"
+        );
+        assert_eq!(
+            metas
+                .iter()
+                .find(|m| m.key == first.session_key)
+                .unwrap()
+                .status,
+            SessionStatus::Active
+        );
+        assert_eq!(
+            metas.iter().find(|m| m.key == created.key).unwrap().status,
+            SessionStatus::Archived
+        );
+        // 切换不算发言：活动时间不变（空闲超时判定依赖它）。
+        assert_eq!(
+            store
+                .get_session(&first.session_key)
+                .await
+                .unwrap()
+                .unwrap()
+                .last_activity_at,
+            before
+        );
+
+        // 不存在的会话：报错而不是静默成功。
+        assert!(scheduler.open_existing(SessionKey::new()).await.is_err());
     }
 
     #[tokio::test]

@@ -84,7 +84,7 @@ kernel 对 LLM provider 的统一抽象，提供流式消息与工具调用；v2
 _Avoid_: Provider（指具体厂商适配器）
 
 **Session（会话）**:
-一次对话流的过程记录，JSONL 追加式持久化；一个话题 = 一条独立会话，**新建只由用户发起**（ADR-0044，`create_session` RPC），旧会话归档保留。
+一次对话流的过程记录，JSONL 追加式持久化；一个话题 = 一条独立会话，**新建、切换、重命名、删除都只由用户发起**（ADR-0044，`create_session` / `open_session` / `rename_session` / `delete_session` RPC），旧会话归档保留。
 _Avoid_: 对话（用户视角的聊天）、聊天记录
 
 **SessionKey（会话键）**:
@@ -104,7 +104,7 @@ _Avoid_: 事件（Event 指面向 GUI 的播报）
 _Avoid_: 全名（指内部 namespace::tool）
 
 **Session scheduler（会话调度）**:
-独立的内核级模块（非服务插件），负责会话生命周期、空闲超时检测与交接摘要；**会话新建只由用户发起**（ADR-0044，`create_session` RPC）——归档当前活动会话、新建独立 SessionKey，树内分叉机制已整体删除；持久化委托 storage 服务。
+独立的内核级模块（非服务插件），负责会话生命周期、会话标题生成、空闲超时检测与交接摘要；**会话新建与切换只由用户发起**（ADR-0044，`create_session` / `open_session` RPC）——归档全部活动会话后新建独立 SessionKey 或激活指定会话，树内分叉机制已整体删除；持久化委托 storage 服务。
 _Avoid_: 会话管理（易与用户可见的管理界面混淆）
 
 **Guard model（守卫模型）**:
@@ -112,11 +112,15 @@ _Avoid_: 会话管理（易与用户可见的管理界面混淆）
 _Avoid_: 调度模型（易与主模型混淆）
 
 **Goal（会话目标）**:
-会话元数据中的可选学习目标；`create_session` 可显式传入，不再是模型决策的产物。
+会话元数据中的可选学习目标（摘要器的输入）；`create_session` 可显式传入，不再是模型决策的产物。与 Session title 语义分离：Goal 面向模型，title 面向用户。
 _Avoid_: 任务名（过窄，Goal 可含更丰富描述）
 
+**Session title（会话标题）**:
+会话元数据中的用户可见名称（`SessionMeta.title`），显示在聊天页侧栏列表；首回合结束后由模型异步生成（`LlmTitler` + `session_title_prompt`，≤12 字），失败降级为首条用户消息前 40 字；用户可经 `rename_session` 改名，已有标题不再自动覆盖。与 Goal 的差别在于**受众**：title 给人看，Goal 给摘要器看。
+_Avoid_: 会话名（口语）、Goal（给模型看的学习目标）
+
 **History route（历史路由）**:
-浏览历史会话的通道，经 RPC `list_sessions` / `read_session` 提供（**未注册为模型工具**——模型看不到历史路由）；新建会话后旧会话完整归档，可按需翻阅。
+浏览历史会话的通道，经 RPC `list_sessions` / `read_session` 提供（**未注册为模型工具**——模型看不到历史路由）；聊天页侧栏会话列表是它唯一的 GUI 呈现（原独立「会话」页已删除）；新建会话后旧会话完整归档，可按需翻阅。
 _Avoid_: 聊天记录查询（口语）
 
 **Message tree（消息树）**:
@@ -148,7 +152,7 @@ _Avoid_: 模型客户端、直接调 provider
 _Avoid_: 配置文件（实现细节）、系统设置
 
 **English immersion mode（英语练习模式）**:
-settings.json 的 `english_mode` 布尔开关（默认 false）；开启后主对话、判分、出题、即时批改、图片理解、会话决策与摘要等模型提示全部追加英文输出规则，GUI 界面文字保持中文。
+settings.json 的 `english_mode` 布尔开关（默认 false）；开启后主对话、判分、出题、即时批改、图片理解、会话标题与摘要等模型提示全部追加英文输出规则，GUI 界面文字保持中文。
 _Avoid_: 界面语言切换（只切模型输出语言）
 
 **Compute backend（验算执行端）**:

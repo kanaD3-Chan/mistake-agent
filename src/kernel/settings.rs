@@ -33,6 +33,8 @@ pub struct ModelConfig {
 pub struct SettingsPatch {
     pub log_level: Option<Level>,
     pub english_mode: Option<bool>,
+    /// 昵称：`Some("")` **是清空**（回到默认称呼），与 api_key 的「空串=保留」语义不同。
+    pub nickname: Option<String>,
     pub main_model: Option<ModelConfigPatch>,
     pub vision_model: Option<ModelConfigPatch>,
 }
@@ -52,11 +54,17 @@ pub struct Settings {
     pub log_level: Level,
     #[serde(default)]
     pub english_mode: bool,
+    /// 用户昵称：只用于侧栏左下角的称呼显示，空串 = 用前端默认称呼。
+    #[serde(default)]
+    pub nickname: String,
     pub main_model: ModelConfig,
     /// 已退役（ADR-0045）：仅为兼容旧 settings.json 保留，运行时不再读取。
     #[serde(default = "default_vision_config")]
     pub vision_model: ModelConfig,
 }
+
+/// 昵称长度上限（字符数）：侧栏一行放得下，也挡住把整段文字当名字存进来。
+const MAX_NICKNAME_CHARS: usize = 24;
 
 fn default_vision_config() -> ModelConfig {
     ModelConfig {
@@ -92,6 +100,7 @@ impl Settings {
             return Ok(Self {
                 log_level: default_log_level(),
                 english_mode: false,
+                nickname: String::new(),
                 main_model: ModelConfig {
                     api_url: "https://api.deepseek.com".into(),
                     api_key: String::new(),
@@ -113,6 +122,7 @@ impl Settings {
         Ok(Self {
             log_level,
             english_mode: false,
+            nickname: String::new(),
             main_model: ModelConfig {
                 api_url: main_url,
                 api_key: main_key,
@@ -130,6 +140,14 @@ impl Settings {
         }
         if let Some(english_mode) = patch.english_mode {
             self.english_mode = english_mode;
+        }
+        if let Some(nickname) = &patch.nickname {
+            let nickname = nickname.trim();
+            let len = nickname.chars().count();
+            if len > MAX_NICKNAME_CHARS {
+                return Err(format!("nickname 不能超过 {MAX_NICKNAME_CHARS} 个字符"));
+            }
+            self.nickname = nickname.to_string();
         }
         let main = &mut self.main_model;
         let vision = &mut self.vision_model;
@@ -186,6 +204,7 @@ impl Settings {
         json!({
             "log_level": self.log_level,
             "english_mode": self.english_mode,
+            "nickname": self.nickname,
             "main_model": {
                 "api_url": self.main_model.api_url,
                 "model": self.main_model.model,
@@ -210,6 +229,7 @@ mod tests {
         Settings {
             log_level: Level::Info,
             english_mode: false,
+            nickname: "小明".into(),
             main_model: ModelConfig {
                 api_url: "https://api.deepseek.com".into(),
                 api_key: "sk-secret-key".into(),
@@ -268,6 +288,50 @@ mod tests {
         settings.apply_patch(&patch).unwrap();
         assert!(settings.english_mode);
         assert_eq!(settings.public_view()["english_mode"], true);
+    }
+
+    #[test]
+    fn patch_applies_and_clears_nickname() {
+        let mut settings = sample();
+        settings
+            .apply_patch(&SettingsPatch {
+                nickname: Some("  张涵  ".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(settings.nickname, "张涵");
+        assert_eq!(settings.public_view()["nickname"], "张涵");
+
+        // 空串是**清空**（回到默认称呼），不是 api_key 那种「空串=保留」。
+        settings
+            .apply_patch(&SettingsPatch {
+                nickname: Some(String::new()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(settings.nickname, "");
+
+        // None 才是不动。
+        settings.nickname = "小明".into();
+        settings.apply_patch(&SettingsPatch::default()).unwrap();
+        assert_eq!(settings.nickname, "小明");
+
+        // 上限按**字符**算：正好 24 个汉字（72 字节）放行，25 个拒绝。
+        settings
+            .apply_patch(&SettingsPatch {
+                nickname: Some("字".repeat(MAX_NICKNAME_CHARS)),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(
+            settings
+                .apply_patch(&SettingsPatch {
+                    nickname: Some("字".repeat(MAX_NICKNAME_CHARS + 1)),
+                    ..Default::default()
+                })
+                .is_err()
+        );
+        assert_eq!(settings.nickname.chars().count(), MAX_NICKNAME_CHARS);
     }
 
     #[test]

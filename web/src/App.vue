@@ -1,11 +1,11 @@
 <script setup>
-import { onBeforeUnmount, onMounted, provide, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, provide, ref } from "vue";
 import { Icon } from "@iconify/vue";
 import { useKernel } from "./composables/useKernel";
 import ChatPage from "./components/ChatPage.vue";
 import MistakesPage from "./components/MistakesPage.vue";
-import SessionsPage from "./components/SessionsPage.vue";
 import SettingsPage from "./components/SettingsPage.vue";
+import SessionListPanel from "./components/SessionListPanel.vue";
 import OobePage from "./components/OobePage.vue";
 
 const kernel = useKernel();
@@ -26,21 +26,78 @@ const busy = ref(false);
 const status = ref("准备中");
 const view = ref("chat");
 const oobeOpen = ref(false);
-const sidebarLocked = ref(false);
+// 侧栏收起 = 只留图标条（宽度在 style.css），这里只管开关与记忆。
+const SIDEBAR_COLLAPSED_KEY = "ma:sidebar-collapsed";
+const sidebarCollapsed = ref(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1");
+// 会话列表常驻在侧栏里，「当前会话」也就归 App 持有：ChatPage 只读它、不自己推导。
+const activeSessionKey = ref(null);
+const sessionList = ref(null);
+
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value;
+  localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed.value ? "1" : "0");
+}
 
 const navItems = [
-  { id: "chat", label: "聊天", icon: "mdi:chat-processing-outline" },
   { id: "mistakes", label: "错题本", icon: "mdi:format-list-bulleted" },
-  { id: "sessions", label: "会话", icon: "mdi:history" },
   { id: "settings", label: "设置", icon: "mdi:cog-outline" },
 ];
 
-const viewMeta = {
-  chat: { sub: "和 Agent 对话，上传作业自动批改" },
-  mistakes: { sub: "错题自动归档，随时回顾错因" },
-  sessions: { sub: "历史会话与消息树分支回放" },
-  settings: { sub: "模型接入与本地数据配置" },
-};
+/* ──── 左下角用户区：昵称（设置里可改）+ 一个占位菜单 ──── */
+const nickname = ref("");
+const displayName = computed(() => nickname.value.trim() || "同学");
+const userBox = ref(null);
+const userMenuOpen = ref(false);
+const menuNotice = ref("");
+
+// 三项都没有后端支撑：本地应用无账号、无服务端，也没有移动端。点了只如实说明。
+const userMenuItems = [
+  {
+    id: "mobile",
+    label: "下载手机端",
+    icon: "mdi:cellphone-arrow-down",
+    note: "移动端尚未支持：目前只有 Windows 桌面版。",
+  },
+  {
+    id: "help",
+    label: "帮助与反馈",
+    icon: "mdi:help-circle-outline",
+    note: "帮助与反馈尚未支持：反馈渠道还没接入。",
+  },
+  {
+    id: "logout",
+    label: "退出登录",
+    icon: "mdi:logout",
+    note: "无需登录：本应用纯本地运行，没有账号体系。",
+  },
+];
+
+function toggleUserMenu() {
+  userMenuOpen.value = !userMenuOpen.value;
+  menuNotice.value = "";
+}
+
+function onMenuPick(item) {
+  menuNotice.value = item.note;
+}
+
+/** 点菜单外面收起；Esc 也收（焦点在菜单里时）。 */
+function onDocumentClick(e) {
+  if (userMenuOpen.value && userBox.value && !userBox.value.contains(e.target)) {
+    userMenuOpen.value = false;
+  }
+}
+
+/** 读设置里的昵称。设置页保存后也会再调一次，让侧栏称呼立刻跟着变。 */
+async function loadProfile() {
+  try {
+    const s = await kernel.call("get_settings", {}, 8000);
+    nickname.value = s.nickname || "";
+    return s;
+  } catch {
+    return null; // 读不到就用默认称呼，不阻塞界面。
+  }
+}
 
 function onStatus(s) {
   busy.value = s.busy;
@@ -51,8 +108,43 @@ function navigate(viewId) {
   view.value = viewId;
 }
 
-function toggleSidebarLock() {
-  sidebarLocked.value = !sidebarLocked.value;
+/** 侧栏顶部的「新对话」：新建会话（面板负责落库与选中）→ select 回调里切到聊天页。 */
+function newSession() {
+  sessionList.value?.newSession();
+}
+
+/** 用户点列表里的会话：服务端归档旧 Active 并激活目标（ADR-0044）。 */
+async function onSelectSession(key) {
+  if (!key || busy.value) return;
+  if (key !== activeSessionKey.value) {
+    try {
+      await kernel.call("open_session", { key }, 15000);
+    } catch (e) {
+      status.value = `切换会话失败：${e.message}`;
+      return;
+    }
+  }
+  activeSessionKey.value = key;
+  view.value = "chat"; // 面板常驻侧栏：在别的页面点会话也回到聊天
+}
+
+/** 会话列表被改动（新建/重命名/删除）或回合结束后：让面板自己重列。 */
+function refreshSessionList() {
+  sessionList.value?.refreshList();
+}
+
+/** 服务端唯一 Active 会话即当前会话（单 Active 不变量），用它兜底同步选中项。 */
+async function syncActiveSession() {
+  if (!ready.value) return;
+  try {
+    const r = await kernel.call("list_sessions", {}, 8000);
+    const arr = r.sessions || [];
+    const active = arr.find((s) => s.status === "active");
+    if (active?.key) activeSessionKey.value = active.key;
+    else if (!arr.some((s) => s.key === activeSessionKey.value)) activeSessionKey.value = null;
+  } catch {
+    // 列表读不到不阻塞界面（会话为空时聊天区显示空状态）。
+  }
 }
 
 /* ---- Ripple effect ---- */
@@ -129,17 +221,15 @@ function destroyRipple() {
 
 onMounted(async () => {
   initRipple();
+  document.addEventListener("click", onDocumentClick);
   try {
     await kernel.start();
     ready.value = true;
     status.value = "就绪";
-    try {
-      const s = await kernel.call("get_settings", {}, 8000);
-      if (!s.main_model?.key_set) {
-        oobeOpen.value = true;
-      }
-    } catch {
-      // 设置读取失败不阻塞主界面。
+    await syncActiveSession();
+    const s = await loadProfile();
+    if (s && !s.main_model?.key_set) {
+      oobeOpen.value = true;
     }
   } catch (e) {
     status.value = "内核异常";
@@ -149,6 +239,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   destroyRipple();
+  document.removeEventListener("click", onDocumentClick);
 });
 </script>
 
@@ -156,7 +247,7 @@ onBeforeUnmount(() => {
   <div class="app">
     <OobePage v-if="oobeOpen" :kernel="kernel" @done="oobeOpen = false" />
 
-    <aside class="sidebar" :class="{ expanded: sidebarLocked }">
+    <aside class="sidebar" :class="{ collapsed: sidebarCollapsed }">
       <div class="brand">
         <span class="brand-mark">
           <Icon icon="mdi:book-education-outline" width="22" />
@@ -166,44 +257,100 @@ onBeforeUnmount(() => {
           <span class="brand-sub">本地智能错题助手</span>
         </span>
         <button
-          class="brand-lock"
-          :class="{ locked: sidebarLocked }"
-          :title="sidebarLocked ? '折叠侧栏' : '锁定侧栏'"
-          @click="toggleSidebarLock"
+          class="sidebar-toggle"
+          type="button"
+          :title="sidebarCollapsed ? '展开侧栏' : '收起侧栏'"
+          :aria-label="sidebarCollapsed ? '展开侧栏' : '收起侧栏'"
+          :aria-expanded="!sidebarCollapsed"
+          @click="toggleSidebar"
         >
-          <Icon :icon="sidebarLocked ? 'mdi:pin' : 'mdi:pin-outline'" width="16" />
+          <Icon :icon="sidebarCollapsed ? 'mdi:chevron-right' : 'mdi:chevron-left'" width="18" />
         </button>
       </div>
-      <nav class="nav" aria-label="主导航">
-        <span class="nav-label">工作台</span>
+      <nav class="sidebar-top" aria-label="主操作">
         <button
-          v-for="item in navItems"
-          :key="item.id"
-          class="nav-item"
-          :class="{ active: view === item.id }"
-          :aria-current="view === item.id ? 'page' : undefined"
-          :title="item.label"
-          @click="view = item.id"
+          class="btn primary new-chat"
+          type="button"
+          title="新对话"
+          aria-label="新对话"
+          :disabled="busy"
+          @click="newSession"
         >
-          <Icon :icon="item.icon" width="20" />
-          <span>{{ item.label }}</span>
+          <Icon icon="mdi:plus" width="18" />
+          <span>新对话</span>
         </button>
       </nav>
+      <div class="sidebar-sessions">
+        <span class="nav-label">会话</span>
+        <SessionListPanel
+          ref="sessionList"
+          :kernel="kernel"
+          :active-key="activeSessionKey"
+          :busy="busy"
+          @select="onSelectSession"
+          @changed="refreshSessionList"
+        />
+      </div>
+
       <div class="sidebar-foot">
-        <div class="status-pill" :class="{ busy, ready: ready && !busy }">
-          <span class="dot"></span><span class="status-text">{{ status }}</span>
+        <nav class="nav" aria-label="次级导航">
+          <button
+            v-for="item in navItems"
+            :key="item.id"
+            class="nav-item"
+            :class="{ active: view === item.id }"
+            :aria-current="view === item.id ? 'page' : undefined"
+            :title="item.label"
+            @click="view = item.id"
+          >
+            <Icon :icon="item.icon" width="20" />
+            <span>{{ item.label }}</span>
+          </button>
+        </nav>
+
+        <div ref="userBox" class="user-box" @keydown.esc="userMenuOpen = false">
+          <div v-if="userMenuOpen" class="user-menu card" role="menu">
+            <button
+              v-for="item in userMenuItems"
+              :key="item.id"
+              class="user-menu-item"
+              :class="{ danger: item.id === 'logout' }"
+              type="button"
+              role="menuitem"
+              @click="onMenuPick(item)"
+            >
+              <Icon :icon="item.icon" width="18" />
+              <span>{{ item.label }}</span>
+            </button>
+            <p v-if="menuNotice" class="user-menu-note">{{ menuNotice }}</p>
+          </div>
+
+          <button
+            class="user-row"
+            type="button"
+            aria-haspopup="menu"
+            :aria-expanded="userMenuOpen"
+            title="账户与帮助"
+            @click="toggleUserMenu"
+          >
+            <span class="avatar" :class="{ busy, ready: ready && !busy }">
+              {{ displayName.slice(0, 1) }}
+            </span>
+            <span class="user-meta">
+              <span class="user-name">{{ displayName }}</span>
+              <span class="user-status">{{ status }}</span>
+            </span>
+            <Icon
+              class="user-caret"
+              :icon="userMenuOpen ? 'mdi:chevron-down' : 'mdi:chevron-up'"
+              width="16"
+            />
+          </button>
         </div>
       </div>
     </aside>
 
     <section class="main">
-      <header class="topbar">
-        <div class="topbar-title">
-          <h1>{{ navItems.find((n) => n.id === view)?.label }}</h1>
-          <span class="topbar-sub">{{ viewMeta[view]?.sub }}</span>
-        </div>
-      </header>
-
       <div class="view-host">
         <Transition name="view" mode="out-in">
           <ChatPage
@@ -211,12 +358,13 @@ onBeforeUnmount(() => {
             :key="'chat'"
             :kernel="kernel"
             :ready="ready"
+            v-model:active-key="activeSessionKey"
             @status="onStatus"
             @navigate="navigate"
+            @sessions-dirty="refreshSessionList"
           />
           <MistakesPage v-else-if="view === 'mistakes'" :key="'mistakes'" :kernel="kernel" />
-          <SessionsPage v-else-if="view === 'sessions'" :key="'sessions'" :kernel="kernel" />
-          <SettingsPage v-else :key="'settings'" :kernel="kernel" />
+          <SettingsPage v-else :key="'settings'" :kernel="kernel" @saved="loadProfile" />
         </Transition>
       </div>
     </section>

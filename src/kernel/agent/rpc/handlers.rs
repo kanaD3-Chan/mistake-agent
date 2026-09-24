@@ -305,15 +305,8 @@ impl Kernel {
                 goal,
             } => {
                 // 回合在跑时拒绝：在飞的任务持有旧会话 key，会继续往刚归档的会话里落盘。
-                {
-                    let state = self.state.lock().await;
-                    if state.turn.is_some() {
-                        return Err(RpcError::new(
-                            "turn_in_progress",
-                            "当前有回合在跑，请先停止再新建会话",
-                        ));
-                    }
-                }
+                self.reject_if_busy("当前有回合在跑，请先停止再新建会话")
+                    .await?;
                 let goal = goal
                     .map(|text| text.trim().to_string())
                     .filter(|t| !t.is_empty())
@@ -338,6 +331,95 @@ impl Kernel {
                     error: None,
                 }))
             }
+            Method::OpenSession { key } => {
+                self.reject_if_busy("当前有回合在跑，请先停止再切换会话")
+                    .await?;
+                self.scheduler
+                    .open_existing(key)
+                    .await
+                    .map_err(|e| RpcError::new("scheduler_error", e.to_string()))?;
+                self.auditor.record(AuditRecord::SessionOpened {
+                    session: key.to_string(),
+                });
+                Ok(Some(RpcFrame::Response {
+                    id,
+                    result: Some(json!({ "session_key": key })),
+                    error: None,
+                }))
+            }
+            Method::RenameSession { key, title } => {
+                let title = title.trim();
+                let title = (!title.is_empty()).then_some(title);
+                self.store
+                    .set_title(&key, title)
+                    .await
+                    .map_err(|e| RpcError::new("storage_error", e.to_string()))?;
+                self.auditor.record(AuditRecord::SessionRenamed {
+                    session: key.to_string(),
+                    title: title.unwrap_or_default().to_string(),
+                });
+                if let Some(title) = title {
+                    // 前端侧栏据此刷新（与模型生成标题同一事件）。
+                    self.events.emit(Event::SessionTitleUpdated {
+                        session: key,
+                        title: title.to_string(),
+                    });
+                }
+                Ok(Some(RpcFrame::Response {
+                    id,
+                    result: Some(json!({ "session_key": key, "title": title })),
+                    error: None,
+                }))
+            }
+            Method::DeleteSession { key } => {
+                self.reject_if_busy("当前有回合在跑，请先停止再删除会话")
+                    .await?;
+                let was_active = self
+                    .store
+                    .get_session(&key)
+                    .await
+                    .map_err(|e| RpcError::new("storage_error", e.to_string()))?
+                    .is_some_and(|m| m.status == SessionStatus::Active);
+                self.store
+                    .remove_session(&key)
+                    .await
+                    .map_err(|e| RpcError::new("storage_error", e.to_string()))?;
+                self.auditor.record(AuditRecord::SessionDeleted {
+                    session: key.to_string(),
+                });
+                // 单 Active 不变量：删掉的是当前活动会话时补建一条空会话（归档集合不受影响）。
+                let mut replacement = None;
+                if was_active {
+                    let created = self
+                        .scheduler
+                        .create_new_session(None, false)
+                        .await
+                        .map_err(|e| RpcError::new("scheduler_error", e.to_string()))?;
+                    self.auditor.record(AuditRecord::SessionCreated {
+                        session: created.key.to_string(),
+                        archived: None,
+                        summary_attached: false,
+                    });
+                    replacement = Some(created.key);
+                }
+                Ok(Some(RpcFrame::Response {
+                    id,
+                    result: Some(json!({
+                        "session_key": key,
+                        "replacement_session_key": replacement,
+                    })),
+                    error: None,
+                }))
+            }
         }
+    }
+
+    /// 回合守卫：在飞的任务持有旧会话 key，会话切换/删除在回合期间一律拒绝。
+    async fn reject_if_busy(&self, message: &str) -> Result<(), RpcError> {
+        let state = self.state.lock().await;
+        if state.turn.is_some() {
+            return Err(RpcError::new("turn_in_progress", message));
+        }
+        Ok(())
     }
 }

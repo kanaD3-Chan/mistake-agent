@@ -2,27 +2,29 @@
 
 ## 1. 测试策略
 
-- **单元测试**：`cargo test`（144 项），覆盖注册表校验、dispatch、session 调度（新建会话/归档/交接摘要/空闲提示/压缩/中断）、storage（文件/内存/DomainIo/TmpIo/迁移）、memory（文件 CRUD/路径越界/旧布局迁移）、model（SSE/usage 解析）、settings（patch/public_view）、prompt（英语模式规则 + AGENTS.md 加载/回退/拼接）、compute 桥接与 handler、插件入口（schema/模板/聚合）。
+- **单元测试**：`cargo test`（160 项），覆盖注册表校验、dispatch、session 调度（新建/切换/删除会话、归档、交接摘要、会话标题生成、空闲提示、压缩、中断）、storage（文件/内存/DomainIo/TmpIo/标题-激活-删除三操作/存量会话迁移）、memory（文件 CRUD/路径越界/旧布局迁移）、model（SSE/usage 解析）、settings（patch/public_view）、prompt（英语模式规则 + AGENTS.md 加载/回退/拼接 + 会话标题提示）、compute 桥接与 handler、RPC 会话方法（wire 解析 + handler 行为）、插件入口（schema/模板/聚合）。
 - **真实 API 集成测试**：`cargo test --test live_api -- --ignored --nocapture`，直接接 DeepSeek（无 key 自动跳过）。
 - **样例端到端**：`samples/` 三套作业图片逐一走 上传→OCR→判分→归档 全链路。
 - **前端自检**：`cd web && npm run check:pyodide`（真实加载 Pyodide WASM 并执行 Python：算术、符号计算（sympy 解方程/求导/积分）、物理（单位换算/运动学）、numpy 数值、异常路径）；`node scripts/katex-check.mjs`（KaTeX 行内/块级/化学式/矩阵/非法公式容错）。
 
-## 2. 用例与结果（单元测试 2026-09-21 实测；真实 API 部分为 2026-08-10 实测，本次未复验）
+## 2. 用例与结果（单元测试 2026-09-23 实测；真实 API 部分为 2026-08-10 实测，本次未复验）
 
-### 单元测试：144 项全过
+### 单元测试：160 项全过
 
 | 模块 | 覆盖点 |
 |---|---|
 | registry | namespace 撞名、wire 撞名、requires 不可满足、懒注册 |
 | dispatch | 注册链路、命令回退同名工具 |
-| session | 首消息建会话、无自动切换（新消息一律继续当前会话）、空闲超时只发 `SessionIdle` 事件不分叉、用户新建会话（归档旧会话/新独立 SessionKey/携带或不携带交接摘要/空会话不携带）、摘要节点下挂新消息、LLM 摘要重试与降级、消息级分支派生/切分支、压缩摘要、InterruptBus |
-| storage | 错题 CRUD、会话追加/归档、active_path/derive_branch/splice_compaction |
+| session | 首消息建会话、无自动切换（新消息一律继续当前会话）、空闲超时只发 `SessionIdle` 事件不分叉、用户新建会话（归档旧会话/新独立 SessionKey/携带或不携带交接摘要/空会话不携带）、用户切换会话（`open_existing` 只归档旧 Active、不改 `last_activity_at`、不存在的 key 报错）、会话标题（模型生成一次即止、模型失败降级截断首条用户消息、无标题文案兜底、已有标题不再调模型、forced_tool 消息取 `display_text` 而非给模型的指令）、摘要节点下挂新消息、LLM 摘要重试与降级、消息级分支派生/切分支、压缩摘要、InterruptBus |
+| rpc | 三个会话方法的 wire 解析（`open_session`/`rename_session`/`delete_session`）、`open_session` 归档旧 Active、删活动会话后仍只有一条 Active（补建空会话）、删归档会话不补建、`rename_session` 落盘与空串清空 |
+| storage | 错题 CRUD、会话追加/归档、`set_title`（裁剪 + 空串清空）/`activate`/`remove_session`（连 jsonl 一起删、重复删报错）、active_path/derive_branch/splice_compaction |
+| storage 迁移 | 线性会话按边界拆两条 + 原文件 `.bak` 字节一致、兄弟分支按最近边界归属、`交接摘要：`/`上下文压缩摘要：` 不算边界故不拆、单一话题（唯一边界即段首）不拆、**首条即边界但后续还有边界仍拆**（真实数据形态）、段落标题取 `display_text`、二次运行文件集合不变 |
 | prompt | AGENTS.md 加载（正常/缺失/超限/非 UTF-8）、系统提示拼接规则与回退、reason 标签 |
 | memory | 文件 CRUD、目录浏览、子树删除、路径校验（绝对/../空段）、中文路径编码与旧布局迁移 |
 | storage IO | `RelPath` 遍历向量、域隔离、TmpIo temp 白名单、运行时真题池文件优先/种子兜底 |
 | model | SSE 解析、usage 解析（response.usage 顶层）、ToolCall 展开 |
-| settings | patch 校验、public_view 不含 key、english_mode 补丁生效 |
-| prompt | english_mode 开启时各提示词追加 English Immersion Mode 规则 |
+| settings | patch 校验、public_view 不含 key、english_mode 补丁生效、昵称裁剪/空串清空/按字符限长 |
+| prompt | english_mode 开启时各提示词追加 English Immersion Mode 规则（含会话标题提示） |
 | compute | BridgeCompute 回执/取消 |
 | 插件 | 12 插件入口参数 schema、practice 模板生成、report/exam/tracking 聚合断言 |
 
@@ -47,7 +49,9 @@
 
 ### 门禁
 
-`cargo fmt --check` ✅ ｜ `cargo clippy --all-targets -- -D warnings` ✅ ｜ `cargo test` ✅ ｜ GUI 冒烟（Wayland 下启动 8s 无崩溃）✅
+`cargo fmt --check` ✅ ｜ `cargo clippy --all-targets -- -D warnings` ✅ ｜ `cargo test` ✅（160 项）｜ `cd web && npm run build` ✅ ｜ GUI 冒烟（Wayland 下启动 8s 无崩溃）✅
+
+> 存量会话迁移（ADR-0044 收尾）：单测覆盖拆分/幂等/`.bak`/单 Active 不变量，且在**真实数据副本**上做过一次走查（`sessions/` 复制到临时目录后调 `migrate_legacy_sessions`，2026-09-23）：`0ad77bb4….jsonl` 的 152 条消息拆成 **22 条**会话（1 条 Active + 21 条 Archived，消息数合计仍为 155）、原文件生成 1 个 `.bak`、`c3cd91d9….jsonl` 无边界不拆、二次运行文件集合不变。**应用内首次启动的真实迁移尚未走查**：先 `cp -r ~/Documents/.mistake-agent/sessions ~/Documents/.mistake-agent/sessions.pre-migration` 备份，再启动应用确认同一结果。前端会话列表（新建/重命名/删除/切换）无自动化测试基建，靠构建 + 真机走查。
 
 ## 3. Bug / 观察列表
 

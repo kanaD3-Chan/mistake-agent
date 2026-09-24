@@ -9,9 +9,9 @@
 - [x] 下线模型自动切换：`SessionScheduler::on_new_message` 主模型预决策（ADR-0032）、回合末 `LlmTurnDecider` 决策（ADR-0030）、`session::switch` 工具（模型不可见）三处一并删除；`GuardModel`/`turn_decider_prompt` 相应退役。✅ **已完成（2026-09-21，ADR-0044）**：三处全部删除，`src/kernel/agent/session/guard.rs` 与 `src/kernel/plugin/session/` 整个目录移除；`complete_with_retry` 迁至 `session/summarize.rs` 与 `LlmSummarizer` 共用。
 - [x] 保留的自动行为：仅系统级空闲超时是否保留待定（倾向保留但改为"提示用户"而非自动切）；失败降级逻辑随决策一起删除。✅ **已完成（2026-09-21，ADR-0044）**：按"保留检测、改为提示用户"落地——12h 空闲超时仍检测，但只发 `session_idle` 事件，不再自动分叉；失败降级逻辑随决策一并删除（不再有决策，也就没有决策失败）。
 - [x] 后端 `start_new` 语义 = 用户手动新建会话（不再由模型触发）；交接摘要仅在用户新建会话时按需携带。✅ **后端已完成（2026-09-21，ADR-0044）**：新增 `create_session` RPC（`carry_summary` / `goal` 参数），归档旧会话 + 新建独立 `SessionKey`；单 Active 不变量由"归档全部 Active"保证；回合在飞时拒绝（`turn_in_progress`）。**前端入口仍待做**（见下一条）。
-- [ ] 前端：会话列表（新建 / 重命名 / 删除 / 按最近活动排序）+「新对话」入口，Chatbox 式交互；会话标题仍由模型按首条消息生成。
-- [ ] 存量数据迁移：树结构会话（含摘要节点、兄弟分支）拆分为独立会话条目，幂等 + `.bak`。
-- [ ] **待定**：会话内消息版本切换（编辑重发 + `< / >` 浏览旧版本，DeepSeek 式）是否保留——若保留，限定为"会话内版本浏览"，不再承担会话边界语义。
+- [x] 前端：会话列表（新建 / 重命名 / 删除 / 按最近活动排序）+「新对话」入口，Chatbox 式交互；会话标题仍由模型按首条消息生成。✅ **已完成（2026-09-23）**：聊天页左栏新增 [SessionListPanel.vue](../web/src/components/SessionListPanel.vue)（「新对话」/ 内联重命名 / 二次确认删除 / 按 `last_activity_at` 倒序），App 的「会话」导航项与 `SessionsPage.vue` 一并删除；聊天页只渲染当前会话（`renderSessionBubbles`），切换/新建/删除走 `open_session` / `create_session` / `delete_session`。标题在首回合落盘 + `TurnEnd` 之后**异步**由模型生成（`LlmTitler` + `session_title_prompt`），失败降级为首条用户消息前 40 字；生成/改名后发 `session_title_updated` 让列表刷新。
+- [x] 存量数据迁移：树结构会话（含摘要节点、兄弟分支）拆分为独立会话条目，幂等 + `.bak`。✅ **已完成（2026-09-23）**：[file/migrate.rs](../src/kernel/plugin/storage/file/migrate.rs)，在 `FileStorage::open` 加载会话前执行；按 `上一会话梗概：` 边界节点（`上下文压缩摘要：` / 老一代 `交接摘要：` 不算）切分并沿 parent 链归属后代（含兄弟分支）→ 每段新 `SessionKey`、段首 `parent_id = None`、消息 id 保留；仅含老 `active_path` 的段继承老状态（**不新增 Active**）。原文件改名为 `<key>.jsonl.bak` 完整保留，扩展名非 `.jsonl` 故二次启动自然跳过（幂等）。非致命：失败只 `log::warn`。
+- [x] **已定（2026-09-23）**：会话内消息版本切换（编辑重发 + `< / >` 浏览旧版本，DeepSeek 式）**保留**，明确限定为"会话内版本浏览"，不再承担会话边界语义；`switch_branch` 仍只作用于当前活动会话。
 
 ### 2. 设置删掉硅基流动等视觉模型，统一只用 DeepSeek
 

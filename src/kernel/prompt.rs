@@ -12,6 +12,8 @@ const ENGLISH_GENERATE_RULE: &str = "\n\n[English Immersion Mode]\nknowledge_poi
 
 const ENGLISH_SUMMARY_RULE: &str = "\n\n[English Immersion Mode]\nWrite the summary in English. Keep key facts, mistake ids, knowledge points and unfinished items.";
 
+const ENGLISH_TITLE_RULE: &str = "\n\n[English Immersion Mode]\nWrite the title in English (at most 6 words). Output the title text only, no quotes.";
+
 /// 英文沉浸人设（B+C 演法，锁静态层）：
 /// - 全听懂中文（含下方中文教学规则），但永远只回英文；
 /// - 假装只抓到学生消息里的英文关键词：复述关键词后，用英文引导组句；
@@ -161,6 +163,18 @@ pub fn practice_generate_system_prompt(english_mode: bool) -> String {
     prompt
 }
 
+/// 会话标题提示（`SessionScheduler::maybe_generate_title`）：按首条对话生成侧栏标题。
+pub fn session_title_prompt(english_mode: bool) -> String {
+    let mut prompt = "给下面这段对话起一个标题，用作聊天侧栏的会话名。\
+     要求：一句话概括这次对话要解决的事，不超过 12 个字；保留学科/知识点等关键信息；\
+     不要引号、不要句号、不要「会话」「标题」之类的前缀，直接输出标题本身。"
+        .to_string();
+    if english_mode {
+        prompt.push_str(ENGLISH_TITLE_RULE);
+    }
+    prompt
+}
+
 /// 压缩/交接摘要提示（M2 落地；M1.5 用 StubSummarizer）。
 pub fn summarize_prompt(english_mode: bool) -> String {
     let mut prompt = "把以下对话压缩成任务摘要，保留关键事实：错题 id、知识点、未完成事项、结论。\
@@ -189,6 +203,8 @@ mod tests {
         assert!(practice_check_system_prompt(true).contains("English Immersion Mode"));
         assert!(practice_generate_system_prompt(true).contains("English Immersion Mode"));
         assert!(summarize_prompt(true).contains("English Immersion Mode"));
+        assert!(session_title_prompt(true).contains("English Immersion Mode"));
+        assert!(!session_title_prompt(false).contains("English Immersion Mode"));
     }
 
     #[test]

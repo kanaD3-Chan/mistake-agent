@@ -43,6 +43,11 @@ pub enum Event {
     MemoryChanged {
         path: String,
     },
+    /// 会话标题已更新（模型首回合生成 / 用户重命名）：侧栏列表刷新用。
+    SessionTitleUpdated {
+        session: SessionKey,
+        title: String,
+    },
     Compaction {
         session: SessionKey,
     },

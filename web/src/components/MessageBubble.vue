@@ -108,6 +108,15 @@ const hasToolBody = computed(() => {
       <div class="reasoning-body">{{ bubble.text }}</div>
     </details>
 
+    <!-- 会话边界：上一会话梗概（迁移后每条拆分会话的首条消息），折叠展示。 -->
+    <details v-else-if="bubble.type === 'divider'" class="session-divider">
+      <summary>
+        <Icon icon="mdi:content-cut" width="16" />
+        {{ bubble.title }}（点击展开）
+      </summary>
+      <div class="session-divider-body">{{ bubble.text }}</div>
+    </details>
+
     <div
       v-else
       class="bubble"

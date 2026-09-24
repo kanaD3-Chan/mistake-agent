@@ -58,6 +58,19 @@ pub enum Method {
         #[serde(default)]
         goal: Option<String>,
     },
+    /// 用户点击会话列表切换到既有会话：归档全部 Active 后激活目标（ADR-0044）。
+    OpenSession {
+        key: SessionKey,
+    },
+    /// 会话重命名：`title` 为空串 = 清空（下个回合末可由模型重新生成）。
+    RenameSession {
+        key: SessionKey,
+        title: String,
+    },
+    /// 删除会话（不可恢复）；若删除的是当前 Active，则由调度层补建一条空会话。
+    DeleteSession {
+        key: SessionKey,
+    },
 }
 
 /// 自定义方法兜底：未知 method 名连同 params 与其余字段一起交给 `RpcExtension`。

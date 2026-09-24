@@ -44,6 +44,35 @@ fn rpc_wire_parses_generic_and_custom_methods() {
     };
     assert!(carry_summary);
     assert!(goal.is_none());
+
+    // 会话列表三个新方法（ADR-0044 收尾）走同一 wire 通道。
+    let key = SessionKey::new();
+    let open: RpcRequest = serde_json::from_str(&format!(
+        r#"{{"id":5,"method":"open_session","key":"{key}"}}"#
+    ))
+    .unwrap();
+    let WireMethod::Generic(Method::OpenSession { key: parsed }) = open.method else {
+        panic!("open_session 应解析为通用方法");
+    };
+    assert_eq!(parsed, key);
+
+    let rename: RpcRequest = serde_json::from_str(&format!(
+        r#"{{"id":6,"method":"rename_session","key":"{key}","title":"线性代数"}}"#
+    ))
+    .unwrap();
+    let WireMethod::Generic(Method::RenameSession { title, .. }) = rename.method else {
+        panic!("rename_session 应解析为通用方法");
+    };
+    assert_eq!(title, "线性代数");
+
+    let delete: RpcRequest = serde_json::from_str(&format!(
+        r#"{{"id":7,"method":"delete_session","key":"{key}"}}"#
+    ))
+    .unwrap();
+    assert!(matches!(
+        delete.method,
+        WireMethod::Generic(Method::DeleteSession { .. })
+    ));
 }
 
 struct StubBuilderModel;
@@ -208,4 +237,172 @@ async fn removed_switch_tool_is_unknown() {
         .await
         .unwrap_err();
     assert_eq!(err.code, "unknown_tool");
+}
+
+/// 装配内核 + 两条会话：返回的 key 为 Active，other 为 Archived。
+async fn kernel_with_two_sessions() -> (Arc<Kernel>, Arc<dyn SessionStore>, SessionKey, SessionKey)
+{
+    let storage = MemoryStorage::new();
+    let store: Arc<dyn SessionStore> = Arc::new(storage.clone());
+    let key = SessionKey::new();
+    store
+        .create_session(&key, &SessionMeta::new(key))
+        .await
+        .unwrap();
+    store
+        .append_message(&key, &Message::user("当前会话"))
+        .await
+        .unwrap();
+
+    let other = SessionKey::new();
+    let mut other_meta = SessionMeta::new(other);
+    other_meta.status = SessionStatus::Archived;
+    store.create_session(&other, &other_meta).await.unwrap();
+    store
+        .append_message(&other, &Message::user("另一条会话"))
+        .await
+        .unwrap();
+
+    let auditor = Auditor::new(Arc::new(MemoryAuditSink::default()));
+    let kernel = KernelBuilder::new()
+        .session_store(store.clone())
+        .main_model(Arc::new(StubBuilderModel))
+        .auditor(auditor)
+        .build()
+        .await
+        .unwrap();
+    (kernel, store, key, other)
+}
+
+async fn call(kernel: &Kernel, method: Method) -> Value {
+    let frame = kernel
+        .handle(RpcRequest {
+            id: 1,
+            method: WireMethod::Generic(method),
+        })
+        .await
+        .unwrap()
+        .expect("应有响应帧");
+    let RpcFrame::Response { result, error, .. } = frame else {
+        panic!("应为响应帧");
+    };
+    assert!(error.is_none(), "不应报错：{error:?}");
+    result.unwrap()
+}
+
+#[tokio::test]
+async fn open_session_archives_previous_active() {
+    let (kernel, store, key, other) = kernel_with_two_sessions().await;
+
+    let result = call(&kernel, Method::OpenSession { key: other }).await;
+    assert_eq!(result["session_key"], json!(other));
+
+    let metas = store.list_sessions().await.unwrap();
+    assert_eq!(
+        metas
+            .iter()
+            .filter(|m| m.status == SessionStatus::Active)
+            .count(),
+        1,
+        "切换后仍只有一条 Active"
+    );
+    assert_eq!(
+        metas.iter().find(|m| m.key == other).unwrap().status,
+        SessionStatus::Active
+    );
+    assert_eq!(
+        metas.iter().find(|m| m.key == key).unwrap().status,
+        SessionStatus::Archived
+    );
+
+    // 不存在的会话：报错而非静默成功。
+    let err = kernel
+        .handle(RpcRequest {
+            id: 2,
+            method: WireMethod::Generic(Method::OpenSession {
+                key: SessionKey::new(),
+            }),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "scheduler_error");
+}
+
+#[tokio::test]
+async fn delete_active_session_leaves_exactly_one_active() {
+    let (kernel, store, key, other) = kernel_with_two_sessions().await;
+
+    let result = call(&kernel, Method::DeleteSession { key }).await;
+    let replacement: SessionKey =
+        serde_json::from_value(result["replacement_session_key"].clone()).unwrap();
+    assert_ne!(replacement, key, "删掉活动会话应补建一条新的");
+
+    let metas = store.list_sessions().await.unwrap();
+    assert!(metas.iter().all(|m| m.key != key), "被删会话应消失");
+    assert_eq!(metas.len(), 2, "另一条会话保留 + 补建的空会话");
+    assert_eq!(
+        metas
+            .iter()
+            .filter(|m| m.status == SessionStatus::Active)
+            .map(|m| m.key)
+            .collect::<Vec<_>>(),
+        vec![replacement],
+        "补建后仍只有一条 Active"
+    );
+    assert!(
+        store.read_all(&replacement).await.unwrap().is_empty(),
+        "补建的是空会话"
+    );
+
+    // 删归档会话：不补建（活动会话不受影响）。
+    let result = call(&kernel, Method::DeleteSession { key: other }).await;
+    assert_eq!(result["replacement_session_key"], Value::Null);
+    let metas = store.list_sessions().await.unwrap();
+    assert_eq!(metas.len(), 1);
+    assert_eq!(metas[0].key, replacement);
+}
+
+#[tokio::test]
+async fn rename_session_persists_and_empty_title_clears() {
+    let (kernel, store, key, _) = kernel_with_two_sessions().await;
+
+    let result = call(
+        &kernel,
+        Method::RenameSession {
+            key,
+            title: "  线性代数错题  ".into(),
+        },
+    )
+    .await;
+    assert_eq!(result["title"], json!("线性代数错题"));
+    assert_eq!(
+        store
+            .get_session(&key)
+            .await
+            .unwrap()
+            .unwrap()
+            .title
+            .as_deref(),
+        Some("线性代数错题")
+    );
+
+    // 空串 = 清空（下个回合末可由模型重新生成）。
+    let result = call(
+        &kernel,
+        Method::RenameSession {
+            key,
+            title: "   ".into(),
+        },
+    )
+    .await;
+    assert_eq!(result["title"], Value::Null);
+    assert!(
+        store
+            .get_session(&key)
+            .await
+            .unwrap()
+            .unwrap()
+            .title
+            .is_none()
+    );
 }

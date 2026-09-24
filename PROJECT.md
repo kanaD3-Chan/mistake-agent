@@ -75,7 +75,7 @@ v2 同一轮多个工具调用**串行执行**；并行列入后续（按依赖�
 **显式 tool-calling（用户发起，不绕过 LLM）**：用户在输入框输入 `namespace::tool`（如 `practice::generate`），前端弹候选框、按 Tab 确认后进入待调用状态（工具徽章 + `<可选参数>` 占位）；发送时 RPC 携带 `force_tool {entry, hint, display?}`（`display` = 前端原始展示文本，落盘为 user 消息的 `display_text`，重开会话后渲染仍友好；模型上下文仍用拼好的指令文本），kernel 开回合并让模型**首轮强制调用该工具**（Responses API `tool_choice`，整回合 `thinking=none`），工具结果回填后由模型继续生成回复——所有内容输出都走聊天框 LLM 侧。工具清单/标题/分组/图标/参数说明/用法示例全部来自 `list_tools`（后端唯一事实源），前端不写死（工具名 → 标题/图标的映射一律不允许在前端维护）。
 
 ### 会话与消息树
-- 会话调度由独立内核级模块（Session scheduler）承担：**会话新建只由用户发起**（ADR-0044）——经 `create_session` RPC 归档当前活动会话并开启一个独立 `SessionKey`（后端已就绪；GUI 的「新对话」入口见 [docs/TODO.md](docs/TODO.md) 第 1 项）。没有任何模型侧的自动判断：原先的三处（新消息到达的预决策 ADR-0032、回合内的 `session::switch` 工具、回合末的 `LlmTurnDecider` ADR-0030）已一并删除，`GuardModel` / `turn_decider_prompt` 随之退役。**失败降级逻辑随决策一起消失**（不再有决策，也就没有决策失败）。交接摘要由 RPC 参数 `carry_summary` 显式控制：为真且旧会话有非空内容时，把「上一会话梗概」作为新会话首条 system 消息。
+- 会话调度由独立内核级模块（Session scheduler）承担：**会话新建只由用户发起**（ADR-0044）——经 `create_session` RPC 归档当前活动会话并开启一个独立 `SessionKey`（后端与 GUI 均已就绪：侧栏「会话列表」提供「新对话」/ 重命名 / 删除 / 切换，会话名由模型按首条消息生成）。没有任何模型侧的自动判断：原先的三处（新消息到达的预决策 ADR-0032、回合内的 `session::switch` 工具、回合末的 `LlmTurnDecider` ADR-0030）已一并删除，`GuardModel` / `turn_decider_prompt` 随之退役。**失败降级逻辑随决策一起消失**（不再有决策，也就没有决策失败）。交接摘要由 RPC 参数 `carry_summary` 显式控制：为真且旧会话有非空内容时，把「上一会话梗概」作为新会话首条 system 消息。
 - 每次模型请求注入**当前会话 ID**（= 会话首条消息 UUID）：会话内保持不变，新建会话后变化。
 - 消息树：每条消息有 id/parentId，JSONL 追加式、永不截断；**编辑消息或"重新生成"会从该点派生新分支**，用户可用 GUI 的 `<` / `>` 翻看旧分支。LLM 上下文只包含活跃路径。
 - 会话是过程记录，业务真相在错题本（storage）——对话历史用完即弃，错题数据长期保留。
@@ -213,7 +213,7 @@ mistake-agent/
 - 用户插件 6 个：hello、grading（场景一：图片直入上下文 → 模型判分 → 归档 `grading::upload`，含 get/update/remove/remove_many 错题管理命令，ADR-0038/0046）、practice（场景二：生成/gaps/check，含智能出题与几何对拍）、report、exam、tracking；内核插件 4 个（storage/memory/compute/model），`memory::*`、`compute::verify` 由内核模块经 KernelPlugin 契约注册（ADR-0035）——五个场景工具均可从会话内触达。
 - 场景二 practice 智能出题全链路落地（2026-08-09，设计见 docs/variants.md）：确定性模板库 15 个初高中知识点（几何模板带 diagram_spec 与前端渲染器同源协议）+ 高考真题池（data/gaokao_pool.json include_str! 编译期嵌入，difficulty=exam 走池内抽取）+ LLM 自由出题（json_schema 强约束，模板未命中时）；LLM 生成的几何图经 compute::verify（verify_geometry.py）做存在性/自洽性对拍，失败注入 prompt 重出（连续 3 次停，执行端不可用降级放行）；practice::check 把练习记录落 memory（practice/history），generate 出题前读近 30 天已掌握集合避重复（prompt 注入避开清单 + 真题池过滤）。
 - 场景一真实链路复验通过（2026-08-04）：图片/文本 PDF → `deepseek-flash` 图片理解（Responses API `input_image`）→ 同模型 json_schema 判分 → 错题归档；assistant 消息落盘与 usage 解析已修复并有 live_api 断言。
-- Tauri GUI 正式化（Vue 3 + Vite，按 ui-ux-pro-max 设计系统）：聊天/错题本/会话历史/设置四页 + **OOBE 首次引导**（test_connection 连通性自检）；思维链默认折叠、流式打字机、工具进度、停止、消息树编辑与分支切换、Pyodide 验算执行端（本地 WASM）、Iconify 图标、Markdown+KaTeX+DOMPurify 防 XSS、附件（图片/PDF 持久展示）、错题本搜索/排序。
+- Tauri GUI 正式化（Vue 3 + Vite，按 ui-ux-pro-max 设计系统）：聊天（内含会话列表侧栏）/错题本/设置三页 + **OOBE 首次引导**（test_connection 连通性自检）；思维链默认折叠、流式打字机、工具进度、停止、消息树编辑与分支切换、Pyodide 验算执行端（本地 WASM）、Iconify 图标、Markdown+KaTeX+DOMPurify 防 XSS、附件（图片/PDF 持久展示）、错题本搜索/排序。
 - 英语练习模式（2026-08-15，ADR-0043）：settings.json `english_mode` 开关，开启后主对话/判分/出题/即时批改/图片理解/会话决策/摘要全链路模型输出切英文，GUI 文案保持中文；数据根 `AGENTS.md` 中文教学规则照常注入（不翻译），由静态层英文人设（B+C 演法：全听懂中文、假装只抓英文关键词、永远只回英文并用英文引导组句）保证输出全英文。
 - 设置页余额卡片（`check_balance` RPC）：DeepSeek `/user/balance` 真实查询，只读不落盘（ADR-0031，ADR-0045 后仅 DeepSeek）。
 - **Standalone**：kernel 内嵌 GUI 进程，mistake-agent 单二进制即可运行（sidecar 已彻底移除）。
@@ -261,7 +261,7 @@ mistake-agent/
 - 三类入口点：**Tool**（LLM 调度）、**Command**（GUI/用户调度）、**Event**（kernel 生命周期调度）。
 - 内核服务：`ServiceId::{Storage, Memory, Compute, Model}`；内核插件经 `KernelPlugin` 两段式契约注册（info 声明 namespace/provides/入口点，register 绑定 handler，ADR-0035）。
 - 会话调度是独立内核级模块（kernel-session），**不占 ServiceId**；会话新建由用户发起（ADR-0044，`create_session` RPC），无模型侧决策。
-- 工具列表示例：`grading::upload / grading::list / practice::generate / practice::gaps / practice::check / report::weekly / exam::compose / tracking::checkin / compute::verify / memory::save / memory::show / memory::remove`；会话历史经 RPC `list_sessions / read_session` 提供（不注册为模型工具）。
+- 工具列表示例：`grading::upload / grading::list / practice::generate / practice::gaps / practice::check / report::weekly / exam::compose / tracking::checkin / compute::verify / memory::save / memory::show / memory::remove`；会话列表经 RPC `list_sessions / read_session` 提供（不注册为模型工具），其 GUI 呈现为聊天页侧栏（ADR-0044 收尾）。
 
 ## 13. 术语表（浓缩）
 

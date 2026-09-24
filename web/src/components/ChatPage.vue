@@ -16,8 +16,10 @@ import { loadToolCatalog, toolIcon, toolList, toolTitle } from "../lib/tools";
 const props = defineProps({
   kernel: { type: Object, required: true },
   ready: { type: Boolean, default: false },
+  // 当前会话由 App 持有（会话列表常驻应用侧栏）；本组件只读，兜底回退时经 emit 上报。
+  activeKey: { type: String, default: null },
 });
-const emit = defineEmits(["status", "navigate"]);
+const emit = defineEmits(["status", "navigate", "update:activeKey", "sessions-dirty"]);
 
 const inputText = ref("");
 const busy = ref(false);
@@ -25,9 +27,8 @@ const toolStatus = ref(null); // { entry, message, icon }
 const bubbles = ref([]);
 const editingId = ref(null);
 const currentStreamId = ref(null);
-const sessionViews = ref({}); // sessionKey -> buildSessionView（含逐节点版本指针）
-const activeSessionKey = ref(null);
-const historyRefreshGen = ref(0); // 防重入：每次 refreshAllHistory 递增，仅最新世代生效
+const sessionView = ref(null); // buildSessionView（含逐节点版本指针）
+const historyRefreshGen = ref(0); // 防重入：每次刷新递增，仅最新世代生效
 const tools = ref([]); // 用户可见工具（list_tools，供输入候选）
 const suggestions = ref([]);
 const activeSuggestion = ref(-1);
@@ -140,20 +141,12 @@ async function handleNavigatePayload(payload) {
   }
 }
 
-/** 记录会话最近活动时间到 localStorage，供 SessionsPage 读取 */
-const LS_ACTIVITY_PREFIX = "ma:last-activity:";
-function recordSessionActivity(key) {
-  if (!key) return;
-  try {
-    localStorage.setItem(LS_ACTIVITY_PREFIX + key, new Date().toISOString());
-  } catch { /* quota 满时静默 */ }
-}
-
 let unsubscribe = null;
 let assistantIndex = -1;
 let reasoningText = "";
 let reasoningIndex = -1;
 let pendingSendId = null;
+let renderedKey = null; // 上次渲染的会话 key（兜底回退是自己发的，别触发重复重置）
 
 const canSend = computed(
   () =>
@@ -383,104 +376,94 @@ function finalize() {
   currentStreamId.value = null;
 }
 
-/** 用缓存的会话视图重建合并气泡流（聊天页：各会话只渲染活跃链，副本按 id 去重）。
- *  与本地已渲染气泡做合并（按 messageId 或用户消息文本去重），避免
- *  turn_end 后全量替换时因后端数据缺失导致刚发出的消息消失。 */
-function renderMergedBubbles() {
-  const seen = new Set();
-  const all = [];
-  for (const [key, view] of Object.entries(sessionViews.value)) {
-    for (const b of renderPath(view, { sessionKey: key })) {
-      const id = String(b.messageId);
-      if (seen.has(id)) continue;
-      seen.add(id);
-      all.push(b);
-    }
-  }
-  all.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
-  console.log("[renderMergedBubbles] all:", all.length, "bubbles:", bubbles.value.length); if (!all.length) { console.warn("[renderMergedBubbles] all empty, skip"); return; }
-
-  // 合并策略：后端已有的按 ID/文本匹配更新；本地独有的保留不丢
-  const backendIds = new Set(all.map((b) => String(b.messageId)));
-  const backendUserTexts = new Set(
-    all.filter((b) => b.type === "user").map((b) => b.text),
-  );
-
-  // 第一遍：将本地已有气泡更新为后端版本（匹配 messageId 或同文本用户消息）
-  const consumedTexts = new Set();
-  for (let i = 0; i < bubbles.value.length; i++) {
-    const lb = bubbles.value[i];
-    const lbId = lb.messageId ? String(lb.messageId) : null;
-    if (lbId && backendIds.has(lbId)) {
-      // 直接替换为后端气泡（含完整 messageId / versions 等元数据）
-      const backend = all.find((b) => String(b.messageId) === lbId);
-      if (backend) bubbles.value[i] = backend;
+/** 用当前会话视图重建气泡流：只渲染当前会话的活跃链，副本按 id 去重。
+ *  与本地已渲染气泡合并（按 messageId，用户消息再按文本兜底），避免 turn_end
+ *  后全量替换时因后端数据缺失导致刚发出的消息消失。 */
+function renderSessionBubbles() {
+  if (!sessionView.value) return;
+  const backend = renderPath(sessionView.value, { sessionKey: props.activeKey });
+  const pending = new Map(backend.map((b) => [String(b.messageId), b]));
+  const out = [];
+  for (const b of bubbles.value) {
+    const id = b.messageId ? String(b.messageId) : null;
+    if (id && pending.has(id)) {
+      out.push(pending.get(id));
+      pending.delete(id);
       continue;
     }
-    // 用户消息无 messageId（刚由 addBubble 添加）：按文本匹配后端版本
-    if (!lbId && lb.type === "user" && backendUserTexts.has(lb.text) && !consumedTexts.has(lb.text)) {
-      const backend = all.find(
-        (b) => b.type === "user" && b.text === lb.text,
+    // 用户气泡发出时还没有 messageId：按文本认领后端版本（不重复渲染）。
+    if (!id && b.type === "user") {
+      const hit = [...pending.entries()].find(
+        ([, v]) => v.type === "user" && v.text === b.text,
       );
-      if (backend) {
-        bubbles.value[i] = backend;
-        consumedTexts.add(lb.text);
+      if (hit) {
+        out.push(hit[1]);
+        pending.delete(hit[0]);
+        continue;
       }
     }
+    out.push(b); // 本地独有（流式中的回答等）保留
   }
-
-  // 第二遍：追加后端独有的气泡（本次回合新增的 assistant / tool / reasoning 等）
-  console.log("[renderMergedBubbles] pass1 done, bubbles:", bubbles.value.map(b => `${b.type}:${b.messageId ? String(b.messageId).slice(-8) : "no-id"}:${(b.text||"").slice(0,20)}`)); const existingIds = new Set(bubbles.value.map((b) => (b.messageId ? String(b.messageId) : null)).filter(Boolean));
-  for (const b of all) {
-    if (!existingIds.has(String(b.messageId))) {
-      bubbles.value.push(b);
-    }
-  }
-
-  // 按时间排序（本地气泡无 createdAt 的排在前面保持插入顺序）
-  bubbles.value.sort(
-    (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0),
-  );
+  out.push(...pending.values());
+  out.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+  bubbles.value = out;
   scrollBottom();
 }
 
-/** 全量历史：每个会话建消息树视图（DeepSeek 式逐节点版本指针），只渲染活跃链。 */
-async function refreshAllHistory() {
-	  const gen = ++historyRefreshGen.value;
+/** 清空流式/编辑/工具等会话内状态：切换会话必须重置，否则旧会话的索引会越界。 */
+function resetSessionState() {
+  assistantIndex = -1;
+  reasoningIndex = -1;
+  reasoningText = "";
+  currentStreamId.value = null;
+  pendingSendId = null;
+  editingId.value = null;
+  toolStatus.value = null;
+}
+
+/** 读取当前会话（会话列表由应用侧栏自己维护，这里只管消息）。 */
+async function refreshSession() {
+  const gen = ++historyRefreshGen.value;
   try {
     const list = await props.kernel.call("list_sessions", {}, 8000);
     const arr = list.sessions || [];
-    const views = {};
-    activeSessionKey.value =
-      arr.find((s) => s.status === "active")?.key || null;
-    for (const s of arr) {
-      try {
-        const detail = await props.kernel.call("read_session", { key: s.key }, 8000);
-        console.log("[refreshAllHistory] session", s.key, "status", s.status, "msgs:", detail.messages.length, "active_path:", detail.meta?.active_path); views[s.key] = buildSessionView(
-          detail.messages,
-          detail.meta?.active_path || null,
-        );
-      } catch {
-        // 单个会话读取失败不阻断整体历史。
-      }
+    // 当前会话为空或已被删除：回落到服务端唯一的 Active 会话（单 Active 不变量）。
+    let key = props.activeKey;
+    if (!key || !arr.some((s) => s.key === key)) {
+      key = arr.find((s) => s.status === "active")?.key || null;
+      if (key !== props.activeKey) emit("update:activeKey", key);
     }
-    if (gen !== historyRefreshGen.value) { console.warn("[refreshAllHistory] stale gen=", gen, "current=", historyRefreshGen.value, "- discarding"); return; }
-	    sessionViews.value = views;
-    renderMergedBubbles();
-    // 同步活跃会话的活动时间到 localStorage
-    if (activeSessionKey.value) recordSessionActivity(activeSessionKey.value);
+    renderedKey = key;
+    if (!key) {
+      sessionView.value = null;
+      bubbles.value = [];
+      return;
+    }
+    const detail = await props.kernel.call("read_session", { key }, 8000);
+    if (gen !== historyRefreshGen.value) return;
+    sessionView.value = buildSessionView(
+      detail.messages,
+      detail.meta?.active_path || null,
+    );
+    renderSessionBubbles();
   } catch (e) {
-    // list_sessions/read_session 尚未接通时，聊天仍可用，只是没有分支/编辑入口。
+    // list_sessions/read_session 尚未接通时，聊天仍可用，只是没有版本/编辑入口。
     if (e.code !== "not_implemented") console.warn("会话回读失败：", e);
   }
 }
 
-let historyLoaded = false;
-async function ensureHistory() {
-  if (historyLoaded || !props.ready) return;
-  historyLoaded = true;
-  await refreshAllHistory();
-}
+/** 用户在侧栏列表切换会话：清掉旧会话的流式/编辑/工具状态再重读。
+ *  `renderedKey` 挡住自己发的兜底回退——否则会把刚渲染好的气泡清掉重来一次。 */
+watch(
+  () => props.activeKey,
+  async (key) => {
+    if (key === renderedKey) return;
+    resetSessionState();
+    bubbles.value = [];
+    sessionView.value = null;
+    await refreshSession();
+  },
+);
 
 async function handleComputeRequest(req) {
   toolStatus.value = {
@@ -545,7 +528,12 @@ function handleFrame(frame) {
       toolStatus.value = null;
       busy.value = false;
       setStatus(false, "就绪");
-      refreshAllHistory();
+      emit("sessions-dirty"); // 侧栏列表刷新（会话是应用级状态）
+      refreshSession();
+      break;
+    case "session_title_updated":
+      // 首回合结束后模型生成的标题（后端异步写回）：刷新侧栏即可。
+      emit("sessions-dirty");
       break;
     case "cache_stats_updated":
       cacheStats.value = e.stats;
@@ -555,7 +543,7 @@ function handleFrame(frame) {
       addBubble({ type: "error", text: e.message });
       busy.value = false;
       setStatus(false, "异常");
-      refreshAllHistory();
+      refreshSession();
       break;
   }
 }
@@ -564,8 +552,6 @@ async function sendMessage() {
   const text = inputText.value.trim();
   if (busy.value) return;
   if (!text && !armedTool.value && !pendingAttachments.value.length) return;
-  // 即时记录活动时间（不等 turn_end 异步回调）
-  if (activeSessionKey.value) recordSessionActivity(activeSessionKey.value);
   const attachments = pendingAttachments.value.map((a) => ({
     path: a.asset_path,
     name: a.name,
@@ -718,7 +704,7 @@ async function saveEdit(text) {
   try {
     await props.kernel.call("edit_message", { message_id: id, text });
     // 从服务端重读：编辑后的版本就地替换，其余对话保持不塌缩。
-    await refreshAllHistory();
+    await refreshSession();
   } catch (e) {
     busy.value = false;
     setStatus(false, "就绪");
@@ -726,21 +712,16 @@ async function saveEdit(text) {
   }
 }
 
-/** < / > 切换版本（DeepSeek 式）：本地改版本指针即时渲染；活跃会话同步服务端。 */
+/** < / > 切换版本（DeepSeek 式，仅限当前会话内）：本地改版本指针即时渲染；
+ *  同时把新链末端同步给服务端，后续发送从所选版本继续。 */
 function switchBranch(bubble, dir = 1) {
-  const view = bubble.sessionKey ? sessionViews.value[bubble.sessionKey] : null;
-  if (!view) return;
-  navigateBranch(view, bubble.messageId, dir);
-  renderMergedBubbles();
-  // 活跃会话：把新链末端同步给服务端，后续发送从所选版本继续。
-  if (bubble.sessionKey === activeSessionKey.value) {
-    const chain = getActiveChain(view);
-    const end = chain.length ? String(chain[chain.length - 1].id) : null;
-    if (end) {
-      props.kernel
-        .call("switch_branch", { message_id: end })
-        .catch(() => {});
-    }
+  if (!sessionView.value) return;
+  navigateBranch(sessionView.value, bubble.messageId, dir);
+  renderSessionBubbles();
+  const chain = getActiveChain(sessionView.value);
+  const end = chain.length ? String(chain[chain.length - 1].id) : null;
+  if (end) {
+    props.kernel.call("switch_branch", { message_id: end }).catch(() => {});
   }
 }
 
@@ -755,7 +736,7 @@ async function copyText(text) {
 onMounted(async () => {
   unsubscribe = props.kernel.onFrame(handleFrame);
   loadTools();
-  await ensureHistory();
+  if (props.ready) await refreshSession();
   loadCacheStats();
 
   // 跨页面跳转：错题本"追问"带过来的消息
@@ -776,7 +757,7 @@ onMounted(async () => {
 watch(
   () => props.ready,
   (v) => {
-    if (v) ensureHistory();
+    if (v) refreshSession();
     if (v) loadTools();
   },
 );
@@ -785,26 +766,27 @@ onUnmounted(() => unsubscribe?.());
 
 <template>
   <div class="chat-page" @paste="onPaste">
-    <div class="chat-topbar">
-      <button
-        v-if="false"
-        class="cache-chip"
-        :title="cacheTitle"
-        aria-label="聊天上下文缓存命中率"
-        @click="loadCacheStats"
-      >
-        <Icon icon="mdi:database-sync-outline" width="15" />
-        <span>上下文缓存命中 {{ cacheRateText }}</span>
-      </button>
-    </div>
+    <div class="chat-col">
+      <div class="chat-topbar">
+        <button
+          v-if="false"
+          class="cache-chip"
+          :title="cacheTitle"
+          aria-label="聊天上下文缓存命中率"
+          @click="loadCacheStats"
+        >
+          <Icon icon="mdi:database-sync-outline" width="15" />
+          <span>上下文缓存命中 {{ cacheRateText }}</span>
+        </button>
+      </div>
 
-    <AttachmentViewer
-      v-if="viewer"
-      :attachment="viewer"
-      @close="viewer = null"
-    />
+      <AttachmentViewer
+        v-if="viewer"
+        :attachment="viewer"
+        @close="viewer = null"
+      />
 
-    <main id="messages">
+      <main id="messages">
       <div v-if="!bubbles.length && !busy" class="empty chat-empty">
         <span class="empty-icon">
           <Icon icon="mdi:school-outline" width="36" />
@@ -989,6 +971,7 @@ onUnmounted(() => unsubscribe?.());
           </button>
         </div>
       </div>
-    </footer>
+      </footer>
+    </div>
   </div>
 </template>

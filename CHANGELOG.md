@@ -22,6 +22,47 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - **`session_idle` event**: emitted when the user speaks again in a
   session that has been idle past the 12-hour threshold. It is a
   prompt only — the session is no longer switched automatically.
+- **Session list RPCs** (follow-up to
+  [ADR-0044](docs/adr/0044-user-driven-session-creation.md)):
+  `open_session {key}` archives every active session and activates the
+  given one (switching is not speaking — `last_activity_at` is left
+  alone); `rename_session {key, title}` trims and persists a title, with
+  an empty string clearing it; `delete_session {key}` removes the
+  session and its JSONL file, creating a replacement empty session when
+  the deleted one was active so the single-active invariant holds. All
+  three are rejected while a turn is in flight (`turn_in_progress`).
+- **Model-generated session titles**: `SessionMeta.title` holds the
+  user-visible title (distinct from `goal`, which stays the summarizer's
+  learning objective). A new `LlmTitler` plus the `session_title_prompt`
+  prompt generate it in a detached task after the first turn ends — the
+  turn handle is released first, so a slow auxiliary call never delays
+  the reply. Failures fall back to the first 40 characters of the first user
+  message's *visible* text (its `display_text` when present, so a
+  forced-tool message yields a real title rather than "请调用工具 X 处理当前请求。"),
+  and an already-set title is never regenerated, so a user
+  rename survives. A new `session_title_updated` event refreshes the
+  sidebar. New audit records: `SessionOpened`, `SessionRenamed`,
+  `SessionDeleted`, `SessionTitleGenerated`.
+- **`nickname` setting**: a free-text name (≤24 characters, empty string
+  clears it — unlike `api_key`, where an empty string means "keep") stored
+  in `settings.json` and returned by `get_settings`. It is display-only:
+  the sidebar's account row shows it, falling back to 「同学」, and it
+  never enters any prompt. The settings page's 通用 card gained the input.
+- **Legacy session migration**: on startup, before sessions are loaded,
+  `FileStorage` scans `sessions/*.jsonl` and splits files that hold
+  several topics into independent sessions
+  (`src/kernel/plugin/storage/file/migrate.rs`). Splits happen at
+  `上一会话梗概：` boundary nodes, with descendants (including sibling
+  branches) attributed to their nearest boundary ancestor; each segment
+  gets a fresh `SessionKey`, keeps its message ids, and has its
+  out-of-segment parent cleared. Only the segment holding the old
+  `active_path` inherits the old status — no new active session is
+  created. A file is split only when it holds at least two topics (topics =
+  boundaries + a non-empty head), so a file whose first topic merely
+  *starts* with a boundary node is still split — and a segment produced
+  by an earlier run is left alone. The original file is renamed to
+  `<key>.jsonl.bak` with its bytes intact; since `.bak` is not `.jsonl`,
+  a second startup is a no-op. Failures only log a warning and leave the original in place.
 
 ### Changed
 
@@ -38,6 +79,36 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   and asks for it.
 - **Audit record `SessionSwitched` → `SessionCreated`**
   (`{session, archived, summary_attached}`).
+- **`list_sessions` result now includes `title`**, alongside the
+  existing `key` / `goal` / `status` / `created_at` / `last_activity_at`
+  fields.
+- **The session list moved into the chat page**: the standalone
+  "Sessions" page and its navigation entry are gone, replaced by a
+  list (`web/src/components/SessionListPanel.vue`) with a "New
+  chat" button, inline rename, a confirmation-guarded delete, and rows
+  sorted by `last_activity_at` descending. The list lives permanently in the
+  app sidebar, between the nav and the status line, rather than as a
+  second column next to the chat; the sidebar is a 260px column that the
+  user can collapse to a 72px icon rail with a button in the brand row
+  (the choice is remembered in `localStorage`) — there is no
+  hover-expand and no session-list toggle icon — and `App.vue` owns the
+  list and the
+  active session key, with `ChatPage` only reading the key. The chat page
+  now renders
+  only the active session instead of merging every session's messages
+  into one stream, and switching sessions resets the streaming state.
+  In-session message-version browsing (`edit_message` + `switch_branch`)
+  is kept, but is now explicitly scoped to the current session and no
+  longer carries any session-boundary meaning.
+- **Sidebar reorganized into app chrome**: the 聊天 nav entry is gone.
+  The top of the sidebar is now 「新对话」 (create a session and land on
+  the chat page — still the only way to start one), 错题本 / 设置 moved
+  down to a secondary nav at the bottom, and the status pill became an
+  account row (avatar + nickname + status, the avatar's ring carrying
+  the kernel state). Its card offers 下载手机端 / 帮助与反馈 / 退出登录 —
+  all three are placeholders, since this is a local-only app with no
+  account system, no server and no mobile build; clicking one says so
+  in the card rather than doing nothing.
 - **Single DeepSeek model** ([ADR-0045](docs/adr/0045-single-deepseek-model.md)):
   one `main_model` config (`deepseek-flash`, Responses API) now covers
   chat, scheduling, summarization and image understanding. The Responses
@@ -91,12 +162,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   from context. `map_model_error` moved into the `practice` plugin, and
   the `grading` plugin no longer requires the `Model` service.
 
-> **Accepted risk**: legacy tree-structured sessions (those containing a
-> summary node) now send their entire path to the model — the summary
-> node duplicates its ancestors' content, so token usage rises and the
-> model may mistake the old goal for the current one. The data itself is
-> unaffected (no errors, no missing fields) and **no migration is
-> needed**; users can sidestep it by creating a new session.
+> **Migration note**: legacy tree-structured sessions (those containing a
+> summary node) used to send their entire path to the model — the summary
+> node duplicates its ancestors' content, so token usage rose and the
+> model could mistake the old goal for the current one. Such files are now
+> **migrated on startup**: each `上一会话梗概：` boundary becomes its own
+> session, and the original file is kept as `<key>.jsonl.bak` (byte-for-byte,
+> so a manual rollback is possible). The migration is idempotent, non-fatal,
+> and never creates an additional active session. Locally this turns the
+> 152-message `0ad77bb4….jsonl` into 22 independent sessions, several of them
+> only ~4 messages long — the fragments left behind by the old
+> model-decided switching, now faithfully represented as one topic per
+> session.
 
 ## [0.1.0-alpha] - 2026-08-19
 

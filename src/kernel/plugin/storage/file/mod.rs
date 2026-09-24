@@ -2,6 +2,7 @@
 
 mod mistakes;
 mod io;
+mod migrate;
 mod tmp;
 #[cfg(test)]
 mod tests;
@@ -46,6 +47,8 @@ impl FileStorage {
                 .map_err(|e| StorageError::Corrupt(format!("错题本解析失败：{e}")))?;
             inner.lock().expect("storage poisoned").mistakes = loaded;
         }
+        // 存量会话迁移：老式「模型自动切换」留下的多话题文件拆成独立会话（幂等，非致命）。
+        migrate::migrate_legacy_sessions(&sessions_dir);
         // 加载会话（每个 <key>.jsonl 首行为元数据）。
         let mut loaded_metas = Vec::new();
         if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
@@ -338,6 +341,20 @@ impl SessionStore for FileStorage {
         self.persist_session_meta(key)
     }
 
+    async fn set_title(&self, key: &SessionKey, title: Option<&str>) -> Result<(), StorageError> {
+        self.inner
+            .lock()
+            .expect("storage poisoned")
+            .sessions
+            .get_mut(key)
+            .ok_or(StorageError::SessionNotFound(*key))?
+            .title = title
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string);
+        self.persist_session_meta(key)
+    }
+
     async fn archive(&self, key: &SessionKey) -> Result<(), StorageError> {
         {
             let mut inner = self.inner.lock().expect("storage poisoned");
@@ -349,6 +366,36 @@ impl SessionStore for FileStorage {
             meta.archived_at = Some(chrono::Utc::now());
         }
         self.persist_session_meta(key)
+    }
+
+    async fn activate(&self, key: &SessionKey) -> Result<(), StorageError> {
+        {
+            let mut inner = self.inner.lock().expect("storage poisoned");
+            let meta = inner
+                .sessions
+                .get_mut(key)
+                .ok_or(StorageError::SessionNotFound(*key))?;
+            meta.status = SessionStatus::Active;
+            meta.archived_at = None;
+        }
+        self.persist_session_meta(key)
+    }
+
+    async fn remove_session(&self, key: &SessionKey) -> Result<(), StorageError> {
+        {
+            let mut inner = self.inner.lock().expect("storage poisoned");
+            if inner.sessions.remove(key).is_none() {
+                return Err(StorageError::SessionNotFound(*key));
+            }
+            inner.messages.remove(key);
+        }
+        // 会话文件删除失败不阻塞（内存态已移除，重启后残留文件仍可读回）。
+        let path = self.session_path(key);
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .map_err(|e| StorageError::Io(format!("删除会话文件失败 {path:?}：{e}")))?;
+        }
+        Ok(())
     }
 
     async fn list_sessions(&self) -> Result<Vec<SessionMeta>, StorageError> {

@@ -3,6 +3,8 @@ import { onMounted, reactive, ref } from "vue";
 import { Icon } from "@iconify/vue";
 
 const props = defineProps({ kernel: { type: Object, required: true } });
+// 保存成功后通知外面（App 用它刷新侧栏左下角的称呼）。
+const emit = defineEmits(["saved"]);
 
 const loading = ref(true);
 const saving = ref(false);
@@ -18,6 +20,7 @@ const rulesOpening = ref(false);
 const form = reactive({
   log_level: "info",
   english_mode: false,
+  nickname: "",
   main: { api_url: "", model: "", transport: "responses", key_set: false, api_key: "" },
 });
 
@@ -28,6 +31,7 @@ async function load() {
     const v = await props.kernel.call("get_settings", {}, 10000);
     form.log_level = v.log_level || "info";
     form.english_mode = Boolean(v.english_mode);
+    form.nickname = v.nickname || "";
     form.main.api_url = v.main_model?.api_url || "";
     form.main.model = v.main_model?.model || "";
     form.main.transport = v.main_model?.transport || "responses";
@@ -86,6 +90,8 @@ async function save() {
   const patch = {
     log_level: form.log_level,
     english_mode: form.english_mode,
+    // 空串 = 清空昵称（回到默认称呼），与 api_key 的「空串=保留」不同。
+    nickname: form.nickname.trim(),
     main_model: {
       api_url: form.main.api_url.trim(),
       api_key: form.main.api_key,
@@ -97,6 +103,7 @@ async function save() {
     await props.kernel.call("set_settings", { patch }, 10000);
     saved.value = true;
     form.main.api_key = "";
+    emit("saved");
     await load();
     await loadBalance();
   } catch (e) {
@@ -196,6 +203,17 @@ onMounted(() => {
     <form v-else class="settings-form" @submit.prevent="save">
       <section class="card">
         <h3><span class="section-icon"><Icon icon="mdi:tune-variant" width="18" /></span>通用</h3>
+        <label class="field">
+          <span>昵称</span>
+          <input
+            v-model="form.nickname"
+            type="text"
+            maxlength="24"
+            placeholder="同学"
+            autocomplete="off"
+          />
+          <small>显示在侧栏左下角；留空则用「同学」。</small>
+        </label>
         <label class="field">
           <span>日志级别</span>
           <select v-model="form.log_level">

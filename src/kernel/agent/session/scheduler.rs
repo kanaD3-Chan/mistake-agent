@@ -38,6 +38,7 @@ pub struct SessionScheduler {
     store: Arc<dyn SessionStore>,
     clock: Arc<dyn Clock>,
     summarizer: Arc<dyn Summarizer>,
+    titler: Arc<dyn Titler>,
     bus: InterruptBus,
     events: Arc<dyn EventSink>,
     idle_timeout: Duration,
@@ -48,6 +49,7 @@ impl SessionScheduler {
         store: Arc<dyn SessionStore>,
         clock: Arc<dyn Clock>,
         summarizer: Arc<dyn Summarizer>,
+        titler: Arc<dyn Titler>,
         bus: InterruptBus,
         events: Arc<dyn EventSink>,
     ) -> Self {
@@ -55,6 +57,7 @@ impl SessionScheduler {
             store,
             clock,
             summarizer,
+            titler,
             bus,
             events,
             idle_timeout: Duration::from_secs(12 * 60 * 60),
@@ -207,10 +210,7 @@ impl SessionScheduler {
             }
         }
 
-        // 单 Active 不变量：查找活动会话的地方都取第一个匹配，必须保证唯一。
-        for meta in &actives {
-            self.store.archive(&meta.key).await?;
-        }
+        self.archive_all_active().await?;
 
         let key = SessionKey::new();
         let goal = goal.or_else(|| {
@@ -237,6 +237,76 @@ impl SessionScheduler {
             archived: actives.first().map(|m| m.key),
             summary_attached,
         })
+    }
+
+    /// 用户切换到既有会话（GUI 会话列表点击）：归档当前活动会话，把目标会话置为活动。
+    ///
+    /// 单 Active 不变量：先归档全部 Active，再激活目标——不更新 `last_activity_at`
+    /// （那是消息活动时间，空闲超时判定依赖它，切换会话不算发言）。
+    pub async fn open_existing(&self, key: SessionKey) -> Result<(), SchedulerError> {
+        if self.store.get_session(&key).await?.is_none() {
+            return Err(SchedulerError::Internal(format!("会话不存在：{key}")));
+        }
+        self.archive_all_active().await?;
+        self.store.activate(&key).await?;
+        Ok(())
+    }
+
+    /// 首回合结束后生成会话标题（侧栏会话列表用），返回新标题。
+    ///
+    /// 仅在尚无标题、且已有用户消息与助手回复时触发一次；模型输出为空则写截断兜底文本。
+    /// 写入后 `title` 非空，后续回合不再触发（也不会覆盖用户改的名）。
+    pub async fn maybe_generate_title(
+        &self,
+        key: &SessionKey,
+    ) -> Result<Option<String>, SchedulerError> {
+        let Some(meta) = self.store.get_session(key).await? else {
+            return Ok(None);
+        };
+        if meta.title.as_deref().is_some_and(|t| !t.trim().is_empty()) {
+            return Ok(None);
+        }
+        let messages = self.store.read_all(key).await?;
+        let has_user = messages
+            .iter()
+            .any(|m| matches!(m.kind, crate::kernel::message::MessageKind::User { .. }));
+        let has_assistant = messages.iter().any(|m| {
+            matches!(
+                m.kind,
+                crate::kernel::message::MessageKind::Assistant { .. }
+            )
+        });
+        if !has_user || !has_assistant {
+            return Ok(None);
+        }
+        let generated = self.titler.title(&messages).await;
+        // 模型调用期间用户可能已手动改名：写回前复查，绝不覆盖用户输入。
+        if let Some(meta) = self.store.get_session(key).await?
+            && meta.title.as_deref().is_some_and(|t| !t.trim().is_empty())
+        {
+            return Ok(None);
+        }
+        let title = if generated.trim().is_empty() {
+            super::title::fallback_title(&messages)
+        } else {
+            generated
+        };
+        self.store.set_title(key, Some(&title)).await?;
+        Ok(Some(title))
+    }
+
+    /// 归档全部活动会话（单 Active 不变量的唯一保证点）。
+    async fn archive_all_active(&self) -> Result<(), SchedulerError> {
+        for meta in self
+            .store
+            .list_sessions()
+            .await?
+            .iter()
+            .filter(|m| m.status == SessionStatus::Active)
+        {
+            self.store.archive(&meta.key).await?;
+        }
+        Ok(())
     }
 
     /// 创建根会话（仅首条消息调用）：根会话没有摘要节点，直接以用户消息开头。

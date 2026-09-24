@@ -106,10 +106,28 @@ impl SessionStore for AnyStorage {
             AnyStorage::Mem(s) => s.set_goal(key, goal).await,
         }
     }
+    async fn set_title(&self, key: &SessionKey, title: Option<&str>) -> Result<(), StorageError> {
+        match self {
+            AnyStorage::File(s) => s.set_title(key, title).await,
+            AnyStorage::Mem(s) => s.set_title(key, title).await,
+        }
+    }
     async fn archive(&self, key: &SessionKey) -> Result<(), StorageError> {
         match self {
             AnyStorage::File(s) => s.archive(key).await,
             AnyStorage::Mem(s) => s.archive(key).await,
+        }
+    }
+    async fn activate(&self, key: &SessionKey) -> Result<(), StorageError> {
+        match self {
+            AnyStorage::File(s) => s.activate(key).await,
+            AnyStorage::Mem(s) => s.activate(key).await,
+        }
+    }
+    async fn remove_session(&self, key: &SessionKey) -> Result<(), StorageError> {
+        match self {
+            AnyStorage::File(s) => s.remove_session(key).await,
+            AnyStorage::Mem(s) => s.remove_session(key).await,
         }
     }
     async fn list_sessions(&self) -> Result<Vec<SessionMeta>, StorageError> {

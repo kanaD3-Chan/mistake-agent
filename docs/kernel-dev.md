@@ -32,7 +32,8 @@ src/kernel/
 │   │   └── tests.rs
 │   └── session/                    Session scheduler
 │       ├── mod.rs                  公共类型与重导出
-│       ├── scheduler.rs            生命周期、Goal、新建会话、空闲检测
+│       ├── scheduler.rs            生命周期、Goal、新建/切换会话、空闲检测
+│       ├── title.rs                会话标题生成（LlmTitler / StubTitler）
 │       ├── summarize.rs            交接摘要与上下文压缩摘要（共用一个 LLM 实现）
 │       ├── interrupt.rs            InterruptBus
 │       └── clock.rs                 时钟抽象
@@ -46,7 +47,7 @@ src/kernel/
 │   ├── storage/                    会话、错题、审计和文件 IO
 │   │   ├── mod.rs                  插件身份与公共导出
 │   │   ├── core/                   AnyStorage 路由
-│   │   ├── file/                   文件后端
+│   │   ├── file/                   文件后端（migrate.rs：启动时按会话边界拆分存量会话，幂等 + .bak）
 │   │   └── mem.rs                  内存后端
 │   ├── memory/                     记忆服务
 │   ├── model/                      Responses/Chat Completions/路由
@@ -167,6 +168,7 @@ Caller
 - `TurnControl`：请求内部中断；
 - `LoggerHandle`；
 - `english_mode`：英语练习模式开关，插件据此选择提示词语言；
+- `nickname`：用户在设置页写的称呼，只影响 GUI 侧栏显示，不进提示词；
 - `EventSink`：工具进度和 GUI 事件。
 
 工具执行默认串行。新增并发执行前必须先解决工具依赖拓扑、结果回填顺序和审计顺序问题。
@@ -200,8 +202,11 @@ Caller
 - `Goal`：当前学习目标（可选）；
 - Active path：消息树中送入模型的当前路径；
 - **新建会话只由用户发起**（ADR-0044）：`create_new_session(goal, carry_summary)` 归档当前活动会话并新建独立 `SessionKey`。没有任何模型侧的自动判断——预决策、回合末决策与 `session::switch` 工具均已删除；
+- **切换会话也只由用户发起**：`open_existing(key)` 归档全部 Active 后激活 `key`（RPC `open_session`），会话不存在报 `SchedulerError`；切换不改 `last_activity_at`（空闲判定依赖它）。`create_new_session` 与 `open_existing` 共用私有的 `archive_all_active()`——单 Active 不变量的唯一保证点；
+- **会话标题**：`maybe_generate_title(key)` 仅在 `title` 为空且已有 ≥1 条 user + ≥1 条 assistant 时调 `Titler`（生产 `LlmTitler`，测试/降级 `StubTitler`）；写回前复查一次标题是否仍为空，**绝不覆盖用户改名**。触发点在 `rpc/mod.rs::start_turn` 的独立 `tokio::spawn` 里（`TurnEnd` 之后），不占用回合句柄；
 - Session handoff：用户新建会话且 `carry_summary` 为真时，把「上一会话梗概」作为**新会话首条** system 消息（旧会话本身不被写入）；
-- 单 Active 不变量：归档**全部** Active 会话后再建新的（`list_sessions` 遍历 HashMap 顺序不定，两个 Active 会让"当前会话"变成随机）；
+- 单 Active 不变量：归档**全部** Active 会话后再建新的（`list_sessions` 遍历 HashMap 顺序不定，两个 Active 会让"当前会话"变成随机）；删除活动会话（RPC `delete_session`）时补建一条空会话；存量迁移同样不新增 Active；
+- 存量迁移：`plugin/storage/file/migrate.rs` 在 `FileStorage::open` 加载会话前按「上一会话梗概：」边界拆分老式多话题文件（幂等 + `.bak`，失败只 `log::warn`），见 [docs/api.md](api.md) §7；
 - 空闲超时：检测保留，但只发 `Event::SessionIdle` 提示用户，**不再自动分叉**；
 - `InterruptBus`：环境变化信号，回合边界消费，不抢占当前工具。
 
@@ -212,12 +217,14 @@ Caller
 `agent/rpc/` 是 GUI 唯一通信面。主要请求包括：
 
 - `SendUserMessage`、`TriggerCommand`、`Abort`；
-- `GetState`、`ListSessions`、`ReadSession`、`CreateSession`、`ListTools`；
-- `EditMessage`、`SwitchBranch`；
+- `GetState`、`ListSessions`、`ReadSession`、`CreateSession`、`OpenSession`、`RenameSession`、`DeleteSession`、`ListTools`；
+- `EditMessage`、`SwitchBranch`（会话内版本浏览，不承担会话边界语义）；
 - `GetSettings`、`SetSettings`、`TestConnection`、`CheckBalance`、`GetCacheStats`；
 - `ComputeResult`：GUI/Pyodide 回执。
 
-内核向 GUI 输出 `Event`：消息增量、reasoning、工具开始/结束/进度、回合结束、会话空闲提示、审计错误、压缩和缓存统计等。
+会话相关的三个写方法（`CreateSession` / `OpenSession` / `DeleteSession`）在回合在飞时一律拒绝（`turn_in_progress`）——在飞的任务持有旧会话 key，中途换/删会让它写错地方。
+
+内核向 GUI 输出 `Event`：消息增量、reasoning、工具开始/结束/进度、回合结束、会话空闲提示、会话标题更新（`SessionTitleUpdated`，侧栏刷新用）、审计错误、压缩和缓存统计等。
 
 新增 GUI 能力优先扩展 `Method`/`RpcFrame` 和 handler；不要另开任意文本命令通道。工具/命令触发统一走 `trigger_command` 或现有 RPC 方法。
 
