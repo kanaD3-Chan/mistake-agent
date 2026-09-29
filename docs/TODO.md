@@ -74,6 +74,7 @@
 - [ ] S6 同步服务端：结构化表 + `changes` 光标 + push/pull + `blobs` 预留
 - [ ] S7 客户端同步引擎：storage outbox + `src/kernel/sync/` + 状态 RPC/事件 + 关闭与删除云端数据
 - [ ] S8 部署：VPS 实测 + 备份策略 + `docs/server.md` 运维手册。（**容器化已完成**：`server/Dockerfile`、`docker-compose.prod.yml`（PostgreSQL + 服务端 + Caddy 自动 TLS）、`deploy/Caddyfile`、`.dockerignore`；**待办**：VPS 上真机走一遍、数据库备份与恢复演练、日志轮转、fail2ban 落地、运维手册）
+- [ ] **赛后清理：销毁演示专用 DeepSeek key**（计划：比赛结束后执行）。该 key 当前**只存在于本机 `server/.env`**，已核验：git 全历史无命中、镜像 env 无、客户端 `settings.json` 用的是另一把（未改动）。操作 = 在 DeepSeek 控制台删除该 key + 从 `server/.env` 删掉 `DEEPSEEK_API_KEY=` 那行并重启服务（服务会告警"未配置"）。销毁后中转面将返回 502 `upstream_unavailable`（属预期），客户端"自备 key"路径不受影响；若还需演示，重新签发一把并**只**写进 `server/.env`。
 
 **二期（教师端，本轮不做）**：
 
