@@ -18,7 +18,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请设置 POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-mistake_agent}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # 卷名刻意带 _prod 后缀：开发用的 docker-compose.yml 也叫 pgdata，
+      # 两者同项目名（目录名）时会解析成**同一个卷**，等于让"生产"复用开发数据。
+      - pgdata_prod:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mistake} -d ${POSTGRES_DB:-mistake_agent}"]
       interval: 10s
@@ -65,6 +67,6 @@ services:
       - caddy_config:/config
 
 volumes:
-  pgdata:
+  pgdata_prod:
   caddy_data:
   caddy_config:
