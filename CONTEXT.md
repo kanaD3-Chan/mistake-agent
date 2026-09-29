@@ -229,7 +229,7 @@ _Avoid_: 直接把 chemfig 当 KaTeX 宏包引入（会静默渲染失败）、�
 数据根目录单文件 `AGENTS.md`（教学规则，家长/老师可编辑）全文注入主模型系统提示（静态基底之后、debug 段之前；`load_agents_md`）。文件缺失（Missing）/ 非 UTF-8（InvalidUtf8）/ 超 64KB（TooLarge）时回退静态基底；路径仅由数据根拼接固定文件名，无用户输入路径与遍历面；保存即生效（无缓存，每请求读取）。设置页经 `get_rules_status` 展示加载状态、`open_rules_file` 打开编辑。英文练习模式开启时，同一 AGENTS.md 中文教学规则照常注入，由静态层英文人设（B+C 演法：全听懂中文、假装只抓英文关键词、永远只回英文并用英文引导组句）保证输出全英文；不翻译、不生成独立英文规则文件。_Avoid_: 技能系统（v2 无技能，ADR-0012）、分层合并指令文件（ADR-0011 单文件）
 
 **Account（账号）**:
-平台服务中的用户身份（`users` 表）：`role`（user / teacher / admin）、`sync_enabled`、状态；首个 admin 由 bootstrap 或 CLI 创建，不开放管理员自助注册。客户端经 `settings.json` 的 `account` 段持有登录态（ADR-0047/0048）。
+平台服务中的用户身份（`users` 表）：`role`（user / teacher / admin）、`sync_enabled`、状态；首个 admin 由 bootstrap 种子（`ADMIN_EMAIL`/`ADMIN_PASSWORD` 环境变量）创建，不开放管理员自助注册；管理操作经 **REST + WebUI**（ADR-0047 修订 R12，不做 CLI），客户端经 `settings.json` 的 `account` 段持有登录态（ADR-0047/0048）。
 _Avoid_: 用户（易与本地昵称 `nickname` 混淆——昵称只是显示称呼，不构成身份）
 
 **Platform service（平台服务）**:

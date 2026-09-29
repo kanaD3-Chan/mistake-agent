@@ -248,7 +248,7 @@ mistake-agent/
 | S1 | 服务端骨架：axum + sqlx + PostgreSQL 迁移 + 配置 + `/healthz` + 分级日志 | ✅ 完成：`server/` 独立 CI 通过，根 `cargo test` 不受影响；容器 PostgreSQL 真实应用迁移 |
 | S2 | 账号：注册 / 登录 / 令牌（不透明串 + SHA-256）/ 三角色 / `sync_enabled` | ✅ 完成：40 项测试覆盖越权、令牌撤销与过期、停用账号、角色边界；真实链路手工验收通过 |
 | S3 | 中转：三协议透传 + 预扣/结算计费 + 三滑动窗口 + 安全护栏（限流/封禁/全局并发） | ✅ 完成：真实 DeepSeek 三协议端到端跑通（Responses / Chat Completions / Anthropic），流水与权益递增逐项核对；96 项测试全绿 |
-| S4 | 兑换码（注册制 + AES 静态加密）与 admin CLI + 套餐数值校准 | 并发兑换与限额边界测试；CSV 导出对账 |
+| S4 | 兑换码（注册制 + AES 静态加密）与**管理 WebUI** + 套餐数值校准 | 并发兑换与限额边界测试；CSV 导出对账；管理面能从浏览器完成发码/发套餐（R12 待定项先定） |
 | S5 | 客户端接入：登录 + OOBE 可选登录 + 兑换码 + 「账户与套餐」卡片 + 401/402 引导 | **端到端可卖**：登录 → 兑换 → 聊天 → 额度减少 |
 | S6 | 同步服务端：结构化表 + `changes` 光标 + push/pull + `blobs` 预留 | 双客户端收敛一致性测试 |
 | S7 | 客户端同步引擎：storage outbox + `src/kernel/sync/` + 状态 RPC/事件 + 关闭与删除云端数据 | 双设备消息 / 错题 / 记忆收敛一致；既有 146 单测与 live_api 全绿 |
@@ -333,7 +333,7 @@ mistake-agent/
 │  billing 套餐、兑换码、权益、三滑动窗口限额、扣次       │
 │  relay   POST /responses：DeepSeek drop-in 中转 + 计量  │
 │  sync    多设备同步：change log 光标 + 结构化入库       │
-│  admin   REST + CLI（生成兑换码 / 发放 / 撤销）         │
+│  admin   REST + WebUI（生成兑换码 / 发放 / 撤销）        │
 └───────────────────────────────────────────────────────┘
 ```
 
