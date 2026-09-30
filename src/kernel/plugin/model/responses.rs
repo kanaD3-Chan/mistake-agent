@@ -177,12 +177,14 @@ impl ResponsesModelService {
         Ok(body)
     }
 
-    async fn post(&self, url: &str, body: &Value) -> Result<reqwest::Response, ModelError> {
+    async fn post(&self, url: &str, body: &Value, turn_id: &str) -> Result<reqwest::Response, ModelError> {
         tokio::time::timeout(
             Duration::from_secs(60),
             self.client
                 .post(url)
                 .bearer_auth(&self.api_key)
+                // 回合标识（ADR-0047 修订 R14）：服务端据此把同一回合的多次往返并为一次扣次
+                .header("x-ma-turn-id", turn_id)
                 .json(body)
                 .send(),
         )
@@ -201,7 +203,11 @@ impl ModelService for ResponsesModelService {
     ) -> Result<ModelStream, ModelError> {
         let body = self.build_body(request)?;
         let url = responses_endpoint(&self.api_url);
-        let mut response = self.post(&url, &body).await?;
+        let turn_id = crate::kernel::plugin::model::turn::for_request(
+            request.turn_id.as_deref(),
+            &request.messages,
+        );
+        let mut response = self.post(&url, &body, &turn_id).await?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -223,7 +229,7 @@ impl ModelService for ResponsesModelService {
             {
                 log::warn!("reasoning 回放被拒，兜底重试：剥离 reasoning + reasoning.effort=none");
                 let fallback = self.build_body_no_reasoning(request)?;
-                response = self.post(&url, &fallback).await?;
+                response = self.post(&url, &fallback, &turn_id).await?;
                 if !response.status().is_success() {
                     let status2 = response.status();
                     let text2 = response.text().await.unwrap_or_default();

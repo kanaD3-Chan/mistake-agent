@@ -52,11 +52,17 @@ impl ChatCompletionsModelService {
                 ResponseFormat::JsonSchema { .. } => json!({"type": "json_object"}),
             };
         }
+        let turn_id = crate::kernel::plugin::model::turn::for_request(
+            request.turn_id.as_deref(),
+            &request.messages,
+        );
         let response = match tokio::time::timeout(
             Duration::from_secs(180),
             self.client
                 .post(&url)
                 .bearer_auth(&self.api_key)
+                // 回合标识（ADR-0047 修订 R14）
+                .header("x-ma-turn-id", &turn_id)
                 .json(&body)
                 .send(),
         )

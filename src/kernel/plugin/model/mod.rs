@@ -15,6 +15,7 @@ use crate::kernel::plugin::services::{ModelError, ResponseFormat, ToolSchema};
 mod chat;
 mod responses;
 mod routing;
+pub(crate) mod turn;
 
 pub use chat::ChatCompletionsModelService;
 pub use responses::ResponsesModelService;

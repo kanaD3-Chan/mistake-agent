@@ -147,6 +147,8 @@ impl Titler for LlmTitler {
             return String::new();
         }
         let request = ModelRequest {
+            // 辅助调用并入**当前**回合（ADR-0047 修订 R14）：标题/摘要不该另起一次扣次。
+            turn_id: crate::kernel::plugin::model::turn::current(),
             messages: vec![
                 Message::system(session_title_prompt(self.english_mode())),
                 Message::user(transcript),

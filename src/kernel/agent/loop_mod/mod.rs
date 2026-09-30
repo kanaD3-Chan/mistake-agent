@@ -141,6 +141,7 @@ impl AgentLoop {
             let mut req_messages = vec![Message::system((self.system_prompt)())];
             req_messages.extend(conversation.iter().cloned());
             let mut request = ModelRequest {
+                turn_id: None,
                 messages: req_messages,
                 tools: Some(input.tools.clone()),
                 reasoning_effort: if reasoning_off {

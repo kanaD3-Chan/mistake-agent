@@ -320,6 +320,7 @@ mod tests {
             "deepseek-flash".into(),
         );
         let request = ModelRequest {
+            turn_id: None,
             messages: vec![Message::user("北京天气？")],
             tools: None,
             reasoning_effort: None,

@@ -341,6 +341,7 @@ impl RpcExtension for AppRpc {
             "test_connection" => {
                 let started = std::time::Instant::now();
                 let model_req = ModelRequest {
+                    turn_id: None,
                     messages: vec![Message::user("回复：ok")],
                     tools: None,
                     reasoning_effort: Some("none".into()),

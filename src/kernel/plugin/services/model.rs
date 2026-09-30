@@ -24,6 +24,9 @@ pub struct ModelRequest {
     pub response_format: Option<ResponseFormat>,
     /// 工具选择策略：强制调用指定工具时用 Function{name}（API 要求关闭思考模式）。
     pub tool_choice: Option<ToolChoice>,
+    /// 回合标识（ADR-0047 修订 R14）：同一学生回合的所有请求共用它，服务端据此
+    /// 只扣一次。`None` = 交给适配器按"最后一条是不是用户消息"推断。
+    pub turn_id: Option<String>,
 }
 
 /// 工具选择策略（OpenAI Responses 兼容）。
@@ -46,6 +49,7 @@ impl ModelRequest {
             reasoning_effort: None,
             response_format: None,
             tool_choice: None,
+            turn_id: None,
         }
     }
 }
