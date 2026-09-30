@@ -41,6 +41,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/auth/login", post(handlers::login))
         .route("/api/v1/auth/logout", post(handlers::logout))
         .route("/api/v1/me", get(handlers::me).patch(handlers::update_me))
+        // 额度视图与账号资料分开：一次查询只做一件事，也让客户端能只读数不读资料
+        .route("/api/v1/me/quota", get(handlers::quota))
 }
 
 /// 启动时创建首个管理员（ADR-0047 决策 3）：`ADMIN_EMAIL` + `ADMIN_PASSWORD` 配齐

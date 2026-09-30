@@ -271,3 +271,9 @@ GET /api/v1/me/quota      # bearer 鉴权，与 /me 同级
 3. **无生效权益 → `200` + 空窗口 + 标记字段**（客户端据此显示兑换引导），**不要用 402**：
    402 的语义是「这次请求被拒」，而「查自己有没有额度」不是被拒。
 4. **不含任何密钥材料**，只有计数与套餐元信息。
+
+**已落地（2026-09-30）**：`GET /api/v1/me/quota` 实现于 `server/src/billing/store.rs::quota_view`
+（与裁决共用 `find_entitlement_tx` / `window_usage_tx`，同源由代码结构保证），
+契约见 `docs/server-api.md` §2.6，验收用例见 `server/tests/quota.rs`
+（含与真实 `reserve()` 的对撞断言）。客户端把卡片换成三窗口百分比仍待做——它依赖本端点，
+故顺序是"端点先行"，现已满足。

@@ -19,7 +19,8 @@ mod store;
 
 pub use ladder::{billed_uses, total_tokens};
 pub use model::{
-    Entitlement, EntitlementSource, Plan, PlanKind, QuotaDecision, QuotaDenial, QuotaGrant,
-    Settlement, TokenUsage, UsageStatus, WindowUsage,
+    Entitlement, EntitlementSource, EntitlementView, Plan, PlanKind, PlanView, QuotaDecision,
+    QuotaDenial, QuotaGrant, QuotaView, Settlement, TokenUsage, UsageStatus, WindowUsage,
+    WindowView,
 };
-pub use store::{ReserveOutcome, reserve, settle};
+pub use store::{ReserveOutcome, quota_view, reserve, settle};

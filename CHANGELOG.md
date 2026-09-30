@@ -12,6 +12,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- **平台额度视图端点** `GET /api/v1/me/quota`（ADR-0047 修订 R13）：返回套餐 + 三滑动窗口（5 小时 / 1 周 / 1 月）的 `limit`/`used`/`remaining`/`resets_at` + 权益快照，供客户端登录态的用量卡片渲染。`used` **刻意复用** `store::window_usage_tx`（含在飞的预留行），并有集成测试与真正的 `reserve()` 对撞，钉住「卡片说用尽 ⇒ 网关同样拒绝」。无生效权益回 `200` + 空窗口
+- **客户端 `check_balance` 在登录态不再使用自备 Key**：`BalanceReport` 增加 `platform` 标记，函数在**读取 key 之前**返回平台占位（结构性保证），补两个单测
+
 - **平台账号端到端走查自动化**：新增 `tests/live_platform.rs`（3 条 `#[ignore]`），用"隔离数据根 + 假 key + 死地址"证明"登录后零配置走平台"，并钉住无权益账号必须拿到 402 `no_entitlement` 而不是静默退回自备 key（补 docs/testing.md §5 的空白，见 ADR-0048 修订 R11）
 - **`.gitattributes`**：锁定 `server/migrations/*.sql`（及 Dockerfile/compose/Caddyfile）为 LF。此前 Windows 的 `core.autocrlf` 会把检出的迁移文件写成 CRLF，导致 sqlx 校验和不匹配、**服务端拒绝启动**（`migration 2 was previously applied but has been modified`）；同一坑会在有人从 CRLF 工作区重建镜像时砸到已部署的服务器
 

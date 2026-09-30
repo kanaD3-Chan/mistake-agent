@@ -122,8 +122,35 @@ PATCH /api/v1/me              Authorization: Bearer <token>
 
 ---
 
-## 3. 管理面
+### 2.6 平台额度
 
+```
+GET /api/v1/me/quota           Authorization: Bearer <token>
+```
+
+登录态那张「用量卡片」的数据源（ADR-0047 修订 R13）。**查额度不是错误**：没有生效权益时同样返回 `200`。
+
+```json
+{
+  "has_entitlement": true,
+  "plan": { "code": "monthly_pro", "name": "月卡 Pro", "kind": "monthly" },
+  "entitlement": { "total_uses": null, "used_uses": 137, "expires_at": "2026-10-29T12:00:00Z" },
+  "windows": [
+    { "key": "five_hour", "limit": 40, "used": 12, "remaining": 28, "resets_at": "2026-09-30T18:20:00Z" },
+    { "key": "week", "limit": 280, "used": 60, "remaining": 220, "resets_at": "2026-10-02T09:05:00Z" },
+    { "key": "month", "limit": 900, "used": 137, "remaining": 763, "resets_at": "2026-10-12T15:40:00Z" }
+  ]
+}
+```
+
+客户端要守住的四条：
+
+- **`used` 与网关判定同源**（含正在飞的请求），所以卡片显示还能用就一定会放行；反过来卡片显示 0 时网关必然回 402。
+- **`resets_at` 是「已用次数首次下降」的时刻**（滑动窗口没有固定重置点），不要按自然日或整点渲染。
+- **`limit` / `remaining` 为 `null`** = 该窗口不限制（体验包只有 `total_uses`）。
+- `has_entitlement: false` 时 `plan` / `entitlement` 为 `null`、`windows` 为空数组——显示兑换引导，**不是错误态**。
+
+## 3. 管理面
 ```
 GET /api/v1/admin/users?limit=50&offset=0      Authorization: Bearer <admin 令牌>
 ```

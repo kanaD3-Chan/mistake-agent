@@ -80,6 +80,10 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 BIN          := target/release/mistake-agent$(EXE_EXT)
 BUNDLE_DIR   := target/release/bundle
 FRONTEND_DST := web/dist
+# 以**入口文件**而不是目录当 make 目标：目录的 mtime 会被"往目录里写任何文件"刷新
+# （例如把 pyodide 拷进 dist/），于是 make 误判前端已是最新而**跳过 vite build**，
+# 最终编出一个没有 index.html 的 exe（2026-09-30 实测踩到）。
+FRONTEND_ENTRY := $(FRONTEND_DST)/index.html
 # 前端源码清单（git ls-files 跨平台；含未跟踪的新文件，避免新增文件不触发重建）
 FRONTEND_SRC := $(shell git ls-files web/src web/index.html web/vite.config.js) $(shell git ls-files --others --exclude-standard web/src)
 
@@ -133,9 +137,9 @@ $(PYODIDE_WHEEL):
 # 阶段 2：构建前端 web/dist
 # ---------------------------------------------------------------------------
 
-build-frontend: $(FRONTEND_DST) ## 构建前端（vite build）
+build-frontend: $(FRONTEND_ENTRY) ## 构建前端（vite build）
 
-$(FRONTEND_DST): web/node_modules/.package-lock.json $(PYODIDE_WHEEL) $(FRONTEND_SRC)
+$(FRONTEND_ENTRY): web/node_modules/.package-lock.json $(PYODIDE_WHEEL) $(FRONTEND_SRC)
 	@echo "[build] vite build"
 	@cd web && npm run build
 
@@ -146,7 +150,7 @@ $(FRONTEND_DST): web/node_modules/.package-lock.json $(PYODIDE_WHEEL) $(FRONTEND
 build-rust: $(BIN) ## 编译 Rust release 二进制
 
 # 增量：src/ 或 Cargo.toml 变化才重编
-$(BIN): $(FRONTEND_DST) $(wildcard src/**/*.rs src/*.rs Cargo.toml build.rs)
+$(BIN): $(FRONTEND_ENTRY) $(wildcard src/**/*.rs src/*.rs Cargo.toml build.rs)
 	@echo "[build] cargo build --release --bins"
 	@cargo build --release --bins
 	@echo "[OK] release 二进制就绪: $(BIN)"

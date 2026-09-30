@@ -13,8 +13,8 @@ use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use super::model::{
-    Entitlement, EntitlementSource, Plan, PlanKind, QuotaDecision, QuotaDenial, Settlement,
-    WindowUsage,
+    Entitlement, EntitlementSource, EntitlementView, Plan, PlanKind, PlanView, QuotaDecision,
+    QuotaDenial, QuotaView, Settlement, WindowUsage, WindowView,
 };
 use super::quota;
 
@@ -263,4 +263,114 @@ pub async fn settle(
 /// u64 → i64：token 数量不可能接近 i64 上限，饱和转换只为"任何输入都不 panic"。
 fn as_i64(value: u64) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+// ---------- 额度视图（只读，ADR-0047 修订 R13） ----------
+
+#[derive(sqlx::FromRow)]
+struct ResetRow {
+    first_5h: Option<DateTime<Utc>>,
+    first_week: Option<DateTime<Utc>>,
+    first_month: Option<DateTime<Utc>>,
+}
+
+/// 各窗口「最早一条仍被计入的用量」。
+///
+/// 只认 `billed_uses > 0` 的行——上游失败被结算为 0 次的流水不该凭空造出一个重置时刻。
+/// **interval 必须与 [`window_usage_tx`] 逐字对应**，否则"已用"与"何时下降"会错位。
+async fn window_resets_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: Uuid,
+) -> Result<ResetRow, sqlx::Error> {
+    sqlx::query_as::<_, ResetRow>(
+        "SELECT
+             MIN(created_at) FILTER (WHERE created_at > now() - interval '5 hours')  AS first_5h,
+             MIN(created_at) FILTER (WHERE created_at > now() - interval '7 days')   AS first_week,
+             MIN(created_at) FILTER (WHERE created_at > now() - interval '30 days')  AS first_month
+         FROM usage_events
+         WHERE user_id = $1 AND billed_uses > 0",
+    )
+    .bind(user_id)
+    .fetch_one(&mut **tx)
+    .await
+}
+
+/// 组装对外视图：上限（实时读库）+ 已用（同一事务）+ 重置时刻。
+fn build_view(
+    effective: Option<(Entitlement, Plan)>,
+    windows: WindowUsage,
+    resets: ResetRow,
+) -> QuotaView {
+    let Some((entitlement, plan)) = effective else {
+        return QuotaView {
+            has_entitlement: false,
+            plan: None,
+            entitlement: None,
+            windows: Vec::new(),
+        };
+    };
+
+    // (key, 上限, 已用, 最早计入时刻, 窗口长度)
+    let rows = [
+        (
+            "five_hour",
+            plan.limit_5h,
+            windows.used_5h,
+            resets.first_5h,
+            chrono::Duration::hours(5),
+        ),
+        (
+            "week",
+            plan.limit_week,
+            windows.used_week,
+            resets.first_week,
+            chrono::Duration::days(7),
+        ),
+        (
+            "month",
+            plan.limit_month,
+            windows.used_month,
+            resets.first_month,
+            chrono::Duration::days(30),
+        ),
+    ];
+    let windows = rows
+        .into_iter()
+        .map(|(key, limit, used, first, span)| WindowView {
+            key,
+            limit,
+            used,
+            // 已超也封底 0：卡片不该显示负数剩余
+            remaining: limit.map(|l| (i64::from(l) - used).max(0)),
+            resets_at: first.map(|t| t + span),
+        })
+        .collect();
+
+    QuotaView {
+        has_entitlement: true,
+        plan: Some(PlanView {
+            code: plan.code,
+            name: plan.name,
+            kind: plan.kind.as_str(),
+        }),
+        entitlement: Some(EntitlementView {
+            total_uses: entitlement.total_uses,
+            used_uses: entitlement.used_uses,
+            expires_at: entitlement.expires_at,
+        }),
+        windows,
+    }
+}
+
+/// 读平台额度视图（`GET /api/v1/me/quota` 的数据源）。
+///
+/// **刻意复用** `find_entitlement_tx` / `window_usage_tx`：R13 要求卡片数字与限流判定同源，
+/// 所以这里不是"再写一份计数 SQL"，而是在同一个事务里走同一段代码。
+pub async fn quota_view(pool: &PgPool, user_id: Uuid) -> Result<QuotaView, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let effective = find_entitlement_tx(&mut tx, user_id).await?;
+    let windows = window_usage_tx(&mut tx, user_id).await?;
+    let resets = window_resets_tx(&mut tx, user_id).await?;
+    tx.commit().await?;
+    Ok(build_view(effective, windows, resets))
 }

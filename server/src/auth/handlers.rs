@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use super::error::AuthError;
 use super::model::{self, AuthUser, Role, User};
 use super::{password, store};
+use crate::billing::QuotaView;
 use crate::http::AppState;
 use crate::security::ClientIp;
 
@@ -155,10 +156,23 @@ pub async fn logout(
 
 // ---------- 账号状态 ----------
 
-/// `GET /api/v1/me`：客户端「账户与套餐」卡片的数据源。
-/// 套餐与用量字段在 S4 加入（ADR-0048 决策 5），这里先给账号本身。
+/// `GET /api/v1/me`：账号本身（邮箱、角色、同步开关）。
 pub async fn me(auth: AuthUser) -> Json<UserResponse> {
     Json(UserResponse { user: auth.user })
+}
+
+/// `GET /api/v1/me/quota`：平台额度视图（ADR-0047 修订 R13）——客户端登录态那张
+/// 「三窗口用量百分比」卡片的数据源。
+///
+/// **无生效权益时也是 200 + 空窗口**，不是 402：402 的语义是「这次请求被拒」，
+/// 而「查自己有没有额度」不是被拒的请求。客户端按 `has_entitlement` 显示兑换引导。
+pub async fn quota(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<QuotaView>, AuthError> {
+    Ok(Json(
+        crate::billing::quota_view(&state.pool, auth.user.id).await?,
+    ))
 }
 
 #[derive(Debug, Deserialize)]

@@ -1,6 +1,7 @@
 //! 计费领域类型（ADR-0047 决策 6/7，修订 R2/R4）。
 
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use uuid::Uuid;
 
 /// 归一化后的用量四元组（R4）。
@@ -211,4 +212,53 @@ pub struct Settlement {
     pub billed_uses: u32,
     pub usage: TokenUsage,
     pub latency_ms: i32,
+}
+
+// ---------- 对外额度视图（ADR-0047 修订 R13） ----------
+
+/// 账户卡片用的滑动窗口视图。
+///
+/// `used` **与限流判定同源**：它由 [`super::store::quota_view`] 在同一个事务里
+/// 用与放行裁决完全相同的查询读出（含在飞的 `reserved` 行），所以卡片上的数字与
+/// 网关放行/拒绝的依据必然一致——不会出现「卡片说还有额度、请求却回 402」。
+#[derive(Debug, Clone, Serialize)]
+pub struct WindowView {
+    /// 窗口标识：`five_hour` / `week` / `month`
+    pub key: &'static str,
+    /// 上限；`None` = 该窗口不限制（体验包只有总次数）
+    pub limit: Option<i32>,
+    pub used: i64,
+    /// 剩余次数；不限时为 `None`。**不会为负**（已超也在 0 封底）。
+    pub remaining: Option<i64>,
+    /// 已用次数**首次下降**的时刻（最早一条仍被计入的用量 + 窗口长度）。
+    ///
+    /// 滑动窗口没有固定重置点，所以前端不要按自然日/整点渲染；无用量时为 `None`。
+    pub resets_at: Option<DateTime<Utc>>,
+}
+
+/// 套餐摘要。
+#[derive(Debug, Clone, Serialize)]
+pub struct PlanView {
+    pub code: String,
+    pub name: String,
+    pub kind: &'static str,
+}
+
+/// 权益摘要（体验包的一次性总次数在这里最直观）。
+#[derive(Debug, Clone, Serialize)]
+pub struct EntitlementView {
+    pub total_uses: Option<i32>,
+    pub used_uses: i32,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// 平台额度视图：客户端登录态那张卡片的数据源。
+#[derive(Debug, Clone, Serialize)]
+pub struct QuotaView {
+    /// 是否有生效权益。`false` 时后面都是 `None` / 空表——客户端据此显示**兑换引导**，
+    /// 这不是错误态（R13）：查自己有没有额度，本来就是一次正常查询。
+    pub has_entitlement: bool,
+    pub plan: Option<PlanView>,
+    pub entitlement: Option<EntitlementView>,
+    pub windows: Vec<WindowView>,
 }

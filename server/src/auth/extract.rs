@@ -57,7 +57,10 @@ impl FromRequestParts<AppState> for RequireAdmin {
 ///
 /// 两者是同一个 bearer 秘密，账号面顺带也认后者，不构成额外攻击面。
 fn platform_token(parts: &Parts) -> Option<&str> {
-    if let Some(raw) = parts.headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok())
+    if let Some(raw) = parts
+        .headers
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
         && let Some(token) = parse_bearer(raw)
     {
         return Some(token);
@@ -94,25 +97,25 @@ mod tests {
         // Claude Code 这类客户端只发 x-api-key（ADR-0047 修订 R1）
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", "mka_from_anthropic_client".parse().unwrap());
-        let mut parts = request_parts(headers);
+        let parts = request_parts(headers);
         assert_eq!(platform_token(&parts), Some("mka_from_anthropic_client"));
 
         // Authorization 优先于 x-api-key（两者都在时以标准头为准）
         let mut headers = HeaderMap::new();
         headers.insert("authorization", "Bearer mka_standard".parse().unwrap());
         headers.insert("x-api-key", "mka_other".parse().unwrap());
-        let mut parts = request_parts(headers);
+        let parts = request_parts(headers);
         assert_eq!(platform_token(&parts), Some("mka_standard"));
     }
 
     #[test]
     fn empty_or_missing_credentials_yield_none() {
-        let mut parts = request_parts(HeaderMap::new());
+        let parts = request_parts(HeaderMap::new());
         assert_eq!(platform_token(&parts), None);
 
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", "   ".parse().unwrap());
-        let mut parts = request_parts(headers);
+        let parts = request_parts(headers);
         assert_eq!(platform_token(&parts), None);
     }
 
