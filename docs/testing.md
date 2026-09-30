@@ -2,14 +2,14 @@
 
 ## 1. 测试策略
 
-- **单元测试**：`cargo test`（179 项），覆盖注册表校验、dispatch、session 调度（新建/切换/删除会话、归档、交接摘要、会话标题生成、空闲提示、压缩、中断）、storage（文件/内存/DomainIo/TmpIo/标题-激活-删除三操作/存量会话迁移）、memory（文件 CRUD/路径越界/旧布局迁移）、model（SSE/usage 解析）、settings（patch/public_view）、**account（账号出错归一化、令牌失效判定、URL 拼接、公开视图不泄漏令牌）**、prompt（英语模式规则 + AGENTS.md 加载/回退/拼接 + 会话标题提示）、compute 桥接与 handler、RPC 会话方法（wire 解析 + handler 行为）、插件入口（schema/模板/聚合）。
+- **单元测试**：`cargo test`（181 项），覆盖注册表校验、dispatch、session 调度（新建/切换/删除会话、归档、交接摘要、会话标题生成、空闲提示、压缩、中断）、storage（文件/内存/DomainIo/TmpIo/标题-激活-删除三操作/存量会话迁移）、memory（文件 CRUD/路径越界/旧布局迁移）、model（SSE/usage 解析）、settings（patch/public_view）、**account（账号出错归一化、令牌失效判定、URL 拼接、公开视图不泄漏令牌）**、prompt（英语模式规则 + AGENTS.md 加载/回退/拼接 + 会话标题提示）、compute 桥接与 handler、RPC 会话方法（wire 解析 + handler 行为）、插件入口（schema/模板/聚合）。
 - **真实 API 集成测试**：`cargo test --test live_api -- --ignored --nocapture`，直接接 DeepSeek（无 key 自动跳过）。
 - **样例端到端**：`samples/` 三套作业图片逐一走 上传→OCR→判分→归档 全链路。
 - **前端自检**：`cd web && npm run check:pyodide`（真实加载 Pyodide WASM 并执行 Python：算术、符号计算（sympy 解方程/求导/积分）、物理（单位换算/运动学）、numpy 数值、异常路径）；`node scripts/katex-check.mjs`（KaTeX 行内/块级/化学式/矩阵/非法公式容错）。
 
 ## 2. 用例与结果（单元测试 2026-09-30 实测；真实 API 部分为 2026-08-10 实测，本次未复验）
 
-### 单元测试：179 项全过
+### 单元测试：181 项全过
 
 | 模块 | 覆盖点 |
 |---|---|
@@ -28,6 +28,7 @@
 | settings（`account` 段） | 旧 `settings.json` 无 `account` 段仍可解析（`serde(default)`）、`public_view().account` **不含令牌**、`normalize_server_url` 强制 http(s) 且去尾斜杠、`AccountPatch` 只改得了 `server_url`（`token`/`email`/`role` 一个都动不了） |
 | account | `endpoint` 拼接（含尾斜杠与多斜杠兜底）、空邮箱/空口令在**本地**拦下（不打网络、不落盘、不留审计）、未登录时 `logout` 幂等（不动服务端、不报错、不留审计）、`status(false)` 纯本地读且公开视图不出现令牌明文、服务端地址改过后 `status(false)` 回当前值而非默认值 |
 | account（错误） | 服务端 `{"error":{"code,message}}` 解析为 `Rejected`；**令牌失效判定只认** `invalid_token` / `missing_token` / `account_disabled`，`Unreachable` / `BadResponse` 一律不清令牌；响应体不可读时回退 `http_{status}` |
+| balance（平台模式） | 登录态**不查自备余额**：`check_balance` 在读取 key 之前返回平台占位（自备 key 不出现在报告里，main_model 指向死地址也不会发请求）；未登录行为不变（回归） |
 | model（路由） | `effective_config`：令牌空 → 用 `main_model`；令牌非空 → `api_url`/`api_key` 被 `server_url`/令牌覆盖，`transport` 保持用户选择 |
 | prompt | english_mode 开启时各提示词追加 English Immersion Mode 规则（含会话标题提示） |
 | compute | BridgeCompute 回执/取消 |
@@ -55,7 +56,7 @@
 
 ### 门禁
 
-`cargo fmt --check` ✅ ｜ `cargo clippy --all-targets -- -D warnings` ✅ ｜ `cargo test` ✅（179 项）｜ `cd web && npm run build` ✅ ｜ GUI 冒烟（Wayland 下启动 8s 无崩溃）✅（前两项为 2026-09-30 实测，GUI 冒烟为早期实测、本轮未复验）
+`cargo fmt --check` ✅ ｜ `cargo clippy --all-targets -- -D warnings` ✅ ｜ `cargo test` ✅（181 项）｜ `cd web && npm run build` ✅ ｜ GUI 冒烟（Wayland 下启动 8s 无崩溃）✅（前两项为 2026-09-30 实测，GUI 冒烟为早期实测、本轮未复验）
 
 > 存量会话迁移（ADR-0044 收尾）：单测覆盖拆分/幂等/`.bak`/单 Active 不变量，且在**真实数据副本**上做过一次走查（`sessions/` 复制到临时目录后调 `migrate_legacy_sessions`，2026-09-23）：`0ad77bb4….jsonl` 的 152 条消息拆成 **22 条**会话（1 条 Active + 21 条 Archived，消息数合计仍为 155）、原文件生成 1 个 `.bak`、`c3cd91d9….jsonl` 无边界不拆、二次运行文件集合不变。**应用内首次启动的真实迁移尚未走查**：先 `cp -r ~/Documents/.mistake-agent/sessions ~/Documents/.mistake-agent/sessions.pre-migration` 备份，再启动应用确认同一结果。前端会话列表（新建/重命名/删除/切换）无自动化测试基建，靠构建 + 真机走查。
 

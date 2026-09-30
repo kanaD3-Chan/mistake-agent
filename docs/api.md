@@ -222,7 +222,7 @@ pub trait UserPlugin {
 
 ```bash
 cd web && npm install && npm run build    # 前端构建（改过 web/ 后必须执行）
-cargo test                                 # 单元测试（179 项）
+cargo test                                 # 单元测试（181 项）
 cargo test --test live_api -- --ignored   # 真实 API 验收：hello + samples/ 三套样例
 cargo run --bin mistake-agent             # Tauri GUI（Wayland/X11 均可）
 ```
