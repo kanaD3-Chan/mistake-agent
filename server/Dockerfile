@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1
 
 # ── 构建阶段 ────────────────────────────────────────────────────────────────
-FROM rust:1-bookworm AS builder
+# 基础镜像可用 `--build-arg RUST_IMAGE=...` 覆盖：网络受限（镜像仓库不可达）时
+# 用本机已有的等价镜像离线构建，不必改这个文件。
+ARG RUST_IMAGE=rust:1-bookworm
+FROM ${RUST_IMAGE} AS builder
 WORKDIR /build
 
 # native-tls 在 Linux 上走 OpenSSL（我们在 Cargo.toml 里刻意避开带 C 代码的 ring/aws-lc，
