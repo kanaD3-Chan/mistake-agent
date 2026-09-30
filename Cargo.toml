@@ -20,10 +20,16 @@ dunce = "1.0.5"
 flexi_logger = "0.31.9"
 futures-core = "0.3.33"
 futures-util = "0.3.33"
-jsonschema = "0.49.3"
+# 关掉默认 feature：它的 default 会打开 resolve-http → reqwest → rustls → aws-lc-rs
+# → aws-lc-sys（C 代码），在含非 ASCII 的工作区路径下必然编译失败。
+# 我们只用 `validator_for` 做本地校验（src/kernel/agent/dispatch.rs），不需要远程 $ref。
+jsonschema = { version = "0.49.3", default-features = false }
 log = "0.4.33"
 pdf-extract = "0.12.0"
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream"] }
+# Windows 原生 TLS（schannel）：刻意不用 rustls —— 它会拖进 aws-lc-sys（C 代码），
+# 而本机工作区路径含非 ASCII 字符，C 编译必然失败，导致 cargo clean 后无法重建。
+# 与服务端同一处理（ADR-0047 修订 R11）。
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "native-tls", "stream"] }
 rfd = "0.17.2"
 schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }

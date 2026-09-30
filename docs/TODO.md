@@ -213,3 +213,20 @@
 - [ ] **UI 置灰**：设置页自备 Key 输入区在登录态置灰 + 说明文案（**不删** `settings.json` 里的 key，否则"退出登录切回自备 Key"不可逆）
 - [ ] **文档同步**：`docs/server-api.md` 补 `/me/quota`；`docs/testing.md` §5 走查步骤加"登录态卡片显示三窗口百分比"验收点
 - 备注：`docs/testing.md` §5 那条端到端走查**已在 kernel 层跑通**（2026-09-30，`tests/live_platform.rs` 3 条 ignored 用例；隔离数据根 + 假 key + 死地址的做法见该文件头）。服务端侧另有 curl 从公网验通（`/healthz`、`/readyz`、登录、真实中转 200）；**GUI 手点路径仍未走**。新发现：账号客户端超时无重试，且注册 409 未按"已存在转登录"处理
+
+## 环境坑：在工作区内直接运行构建产物 → 没有窗口（2026-09-30 实测）
+
+**现象**：双击 `target/release/mistake-agent.exe`，进程活着但**永远不出现窗口**；`src-tauri` 那套配置、WebView2 运行时（154.0.4258.37）、依赖版本全部正常，且**同一份 exe 复制到工作区外就能正常起窗口**。
+
+**实测对照**（同一个二进制、同一台机器、同一启动方式）：
+
+| 运行位置 | 路径长度 | 结果 |
+|---|---|---|
+| `%LOCALAPPDATA%\错题 Agent\`（安装位置） | 60 | ✅ 窗口正常 |
+| `C:\Users\sunsi\Desktop\项目代码\ma-path-test\`（中文、浅） | 64 | ✅ |
+| 纯 ASCII 深路径（4 层 + target/release） | 111 | ✅ |
+| **工作区内 `…\mistake-agent\target\release\`** | 81 | ❌ 无窗口、WebView2 子进程从未拉起 |
+
+**机制**（证据链）：新构建的进程会加载 `EmbeddedBrowserWebView.dll`，然后全部线程进入 Wait、CPU 近乎为零，**且从不创建 `%LOCALAPPDATA%\com.mistake.agent\EBWebView`、从不拉起 `msedgewebview2.exe`**——即 WebView2 的浏览器子进程起不来。这与本会话里观察到的其它沙箱现象同源（孙进程无法写 `%TEMP%`、管道 stdio 的 spawn 会 EPERM）：**工作区目录带有会话沙箱施加的限制，会阻断孙进程启动**。
+
+**结论**：这不是产品缺陷，本机验证时不要从 `target/release/` 直接运行。要么走 **NSIS 安装包**（装到 `%LOCALAPPDATA%\错题 Agent\`），要么先把 exe 复制到工作区外再运行。
