@@ -16,6 +16,8 @@ const balanceError = ref("");
 const rules = ref(null);
 const rulesError = ref("");
 const rulesOpening = ref(false);
+// 已登录平台服务时，下面那张卡的 DeepSeek 余额与学生无关（他花的是平台额度）。
+const accountLoggedIn = ref(false);
 
 const form = reactive({
   log_level: "info",
@@ -37,6 +39,7 @@ async function load() {
     form.main.transport = v.main_model?.transport || "responses";
     form.main.key_set = Boolean(v.main_model?.key_set);
     form.main.api_key = "";
+    accountLoggedIn.value = Boolean(v.account?.logged_in);
   } catch (e) {
     error.value = `读取设置失败：${e.message}`;
   } finally {
@@ -155,6 +158,11 @@ onMounted(() => {
           {{ balanceLoading ? "查询中…" : "刷新" }}
         </button>
       </div>
+
+      <p v-if="accountLoggedIn" class="balance-note">
+        <Icon icon="mdi:information-outline" width="16" />
+        已登录平台服务：模型调用走平台额度，下面这个 DeepSeek 余额不再被使用。
+      </p>
 
       <p v-if="balanceError" class="alert" role="alert">
         <Icon icon="mdi:alert-circle-outline" width="18" />{{ balanceError }}

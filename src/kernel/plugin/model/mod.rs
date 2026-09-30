@@ -20,6 +20,7 @@ pub use chat::ChatCompletionsModelService;
 pub use responses::ResponsesModelService;
 pub use routing::{
     AttachmentResolvingModelService, LiveSettingsModelService, build_main_service,
+    effective_config,
 };
 
 // ---------- 内核插件入口（ADR-0035）：model 服务身份声明 ----------

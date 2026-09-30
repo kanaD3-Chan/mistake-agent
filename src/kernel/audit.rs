@@ -50,6 +50,16 @@ pub enum AuditRecord {
         session: String,
         title: String,
     },
+    /// 平台账号注册成功（服务端 201）。**只记邮箱，不记口令/令牌**。
+    AccountRegistered {
+        email: String,
+    },
+    /// 平台账号登录成功：本地令牌已写入，模型链路切到平台。
+    AccountLoggedIn {
+        email: String,
+    },
+    /// 平台账号登出：本地令牌已清除（服务端撤销失败也照记——本地状态才是真相）。
+    AccountLoggedOut,
     MemoryWrite {
         path: String,
     },

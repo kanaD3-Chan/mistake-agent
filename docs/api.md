@@ -50,6 +50,12 @@
 | `delete_session` | `key` | ✅ | 删除会话（含 JSONL 文件）；若删的是当前活动会话则随后补建一条空会话以保住单 Active 不变量，返回 `{replacement_session_key}`（未补建时 `null`）；记审计 `session_deleted`；回合在飞时拒绝（`turn_in_progress`） |
 | `compute_result` | `compute_id`, `stdout`, `stderr`, `duration_ms` | ✅ M4 | GUI/Pyodide 验算回执（compute 桥接）；`compute_id` 必须回填事件 `compute_request` 的 id |
 | `get_rules_status` | — | ✅ | 返回 `{loaded: bool, path, reason?, bytes?}`：数据根 AGENTS.md 教学规则加载状态（`reason` = `missing`/`too_large`/`invalid_utf8`，缺失/损坏/超限时系统提示已回退静态文本） |
+| `register` | `email`, `password`, `display_name?` | ✅ S5 | 平台账号注册（201）。**不自动登录**——服务端不签发令牌，登录是独立的下一步；返回 `{email, display_name}` |
+| `login` | `email`, `password` | ✅ S5 | 登录并落盘令牌：写 `account.{token,email,role,sync_enabled}` → `save()` → 模型链路热替换到平台 → 发 `account_changed` → 记审计（**只记邮箱**）。返回账号公开视图（**不含令牌**） |
+| `logout` | — | ✅ S5 | 撤销服务端令牌 → 清本地身份 → 模型链路热替换回自备 Key → 发 `account_changed`。服务端撤销失败（断网/令牌已过期）只 `log::warn`，**本地照常退出**；`server_url` 保留。**不碰任何本地数据**（错题本 / 会话 / 记忆） |
+| `get_account_status` | `revalidate?: bool` | ✅ S5 | 默认（false）纯本地读，不打网络。`revalidate:true` 时打一次 `GET /me` 校验令牌并刷新身份字段。返回 `{logged_in, server_url, email, role, sync_enabled, reason?}`，`reason` = `token_invalid` / `account_disabled` / `unreachable` / `server_error` |
+
+> 账号四方法走 `CustomMethod` 兜底 + `AppRpc` 扩展，不进通用 `Method` 枚举（账号是业务，见 `docs/TODO.md` 的 RPC 技术债条目）。错误码即服务端 `{"error":{"code"}}` 的 `code` 原样透出（`invalid_credentials` / `email_taken` / `login_blocked` / `account_disabled` / `validation_failed`），本地拦截为 `invalid_params`，传输失败为 `network` / `bad_response`，落盘失败为 `save_failed`；`message` 是服务端的中文文案，客户端不再自编。`redeem_code` / `set_account_sync` **未实现**（依赖 S4，见 ADR-0048 修订 R4/R6）。
 
 > Tauri 侧命令（GUI 专属，见 src/main.rs）：`start_kernel`、`kernel_send`、`pick_homework_file`、`open_rules_file`；前端经 `@tauri-apps/api` 的 `invoke` 调用（web/src/composables/useKernel.js）。
 > `pick_homework_file` 返回 `{temp_path, asset_path, name}`：`temp_path` 是系统临时目录暂存（kernel 白名单，处理后删除），`asset_path` 是数据根目录 `uploads/` 的持久副本（Tauri asset 协议展示用，不随 temp 删除）。
@@ -80,6 +86,7 @@
 | `turn_end` | `stop_reason` | `natural` / `tool_call_limit` / `consecutive_failures` / `turn_timeout` / `user_aborted` / `failed` / `internal_abort`；`failed` 表示回合失败，前端恢复可聊天状态 |
 | `session_idle` | `session`, `idle_seconds` | 会话空闲超时提示（ADR-0044）：用户沉寂超过 12h 后再次发言时发出。**仅提示**，不自动切换会话——是否开新话题由用户决定 |
 | `session_title_updated` | `session`, `title` | 会话标题已更新（首回合结束后模型生成 / 用户 `rename_session`）：侧栏列表刷新用 |
+| `account_changed` | `logged_in`, `email` | 平台账号登录 / 登出（含 `get_account_status{revalidate}` 判定令牌失效后的被动登出）。**负载只有邮箱，绝不带令牌** |
 | `memory_changed` | `path` | 记忆变更 |
 | `compaction` | `session` | 上下文压缩 |
 | `error` | `message` | 错误播报 |
@@ -175,11 +182,22 @@ pub trait UserPlugin {
   "log_level": "info",
   "english_mode": false,
   "nickname": "",
-  "main_model": { "api_url": "https://api.deepseek.com", "api_key": "...", "model": "deepseek-flash", "transport": "responses" }
+  "main_model": { "api_url": "https://api.deepseek.com", "api_key": "...", "model": "deepseek-flash", "transport": "responses" },
+  "account": {
+    "server_url": "http://8.131.146.250:8080",
+    "token": "",
+    "email": "",
+    "role": "",
+    "sync_enabled": false
+  }
 }
 ```
 
 `nickname` 是侧栏左下角的称呼（≤24 字符，空串=用前端默认「同学」）。`vision_model` 字段仅为兼容旧配置保留、运行时不再读取（ADR-0045）。环境变量回退：`DEEPSEEK_API_KEY` / `DEEPSEEK_API_URL` / `MISTAKE_AGENT_LOG_LEVEL`。
+
+**`account` 段（ADR-0048）**：旧 `settings.json` 无此段仍可解析（`serde(default)`）。`token` 为空即**本地模式**，行为与无账号时完全一致；非空即**平台模式**——`effective_config` 用 `server_url` 覆盖 `api_url`、用 `token` 覆盖 `api_key`，`transport` 与模型名不动（模型名由服务端强制）。`role` / `sync_enabled` 由服务端回执写入，客户端只读展示（`sync_enabled` 目前只落库，同步引擎属 S6）。`server_url` 经 `normalize_server_url()` 归一化（强制 http(s)、必须有主机名、去尾斜杠）。
+
+> **`token` / `email` / `role` / `sync_enabled` 不可经 `set_settings` 写入**：`SettingsPatch.account`（`AccountPatch`）里**只有 `server_url`** 一个字段，类型层面就堵死了前端注入令牌或伪造身份。四个字段只由 `login` / `logout` / `get_account_status` 三条路径写。`public_view()` 的 `account` 段只含 `{logged_in, server_url, email, role, sync_enabled}`，与 `api_key` 同一纪律——**永不返回令牌**。
 
 ## 6. 超时与取消模型（ADR-0022）
 
@@ -204,7 +222,7 @@ pub trait UserPlugin {
 
 ```bash
 cd web && npm install && npm run build    # 前端构建（改过 web/ 后必须执行）
-cargo test                                 # 单元测试（146 项）
+cargo test                                 # 单元测试（179 项）
 cargo test --test live_api -- --ignored   # 真实 API 验收：hello + samples/ 三套样例
 cargo run --bin mistake-agent             # Tauri GUI（Wayland/X11 均可）
 ```
@@ -222,6 +240,7 @@ cargo run --bin mistake-agent             # Tauri GUI（Wayland/X11 均可）
 | src/kernel/agent/dispatch.rs | Caller 检查、jsonschema 校验、两级取消、延期后门 |
 | src/kernel/agent/loop_mod/ | agent loop、护栏、气泡完成落盘 |
 | src/kernel/agent/session/ | SessionScheduler、InterruptBus、空闲超时、交接摘要 |
+| src/kernel/account/ | 平台账号（ADR-0048）：REST 客户端、错误归一化与令牌失效判定、账号服务（唯一读写 `settings.account` 的地方） |
 | src/kernel/plugin/storage/ · memory/ · compute/ | 内核插件（服务实现 + 工具入口）；plugin/mod.rs 聚合内核插件清单（ADR-0035） |
 | src/kernel/agent/rpc/ | 帧类型、Kernel 组装与请求路由 |
 | src/main.rs | Tauri 壳：进程内 Kernel + Channel 桥接（standalone，唯一二进制） |

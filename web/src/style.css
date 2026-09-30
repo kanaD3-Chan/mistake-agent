@@ -497,6 +497,139 @@ textarea {
   color: var(--color-text-weak);
 }
 
+/* ---- 平台账号：菜单摘要 / 首屏门禁 / 登录表单（ADR-0048） ---- */
+
+/* 已登录时菜单顶部一行账号摘要。邮箱可以很长，必须能截断——
+   一行长邮箱会把菜单顶宽，侧栏跟着变形。 */
+.user-menu-account {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 4px 10px 8px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.user-menu-email {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--color-text-weak);
+}
+
+.user-menu-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.user-menu-item:disabled:hover {
+  background: transparent;
+  color: var(--color-text);
+}
+
+/* 首屏门禁：铺满整屏，用应用自己的底与卡片语言，不另起一套配色。 */
+.login-gate {
+  position: fixed;
+  inset: 0;
+  /* 压过 OOBE（80）与右键菜单浮层（91）：门禁是最后一层，谁都不该盖在它上面。 */
+  z-index: 95;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xl);
+  background: var(--color-background);
+  overflow-y: auto;
+}
+
+.gate-card {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-xl);
+}
+
+.gate-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.gate-title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--color-text-strong);
+}
+
+.gate-lead {
+  margin-top: calc(-1 * var(--space-sm));
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-text-weak);
+}
+
+/* 「先跳过」刻意做得不显眼：它是安全出口，不是主推路径。 */
+.gate-skip {
+  align-self: center;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-weak);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.gate-skip:hover {
+  color: var(--color-text);
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.auth-submit {
+  justify-content: center;
+}
+
+/* 登录 / 注册切换：胶囊两格，当前态用强调色。 */
+.segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  padding: 2px;
+  background: var(--color-muted);
+  border-radius: var(--radius-pill);
+}
+
+.segmented > button {
+  padding: 7px 12px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-weak);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.segmented > button.active {
+  background: var(--color-surface);
+  color: var(--color-accent);
+  box-shadow: var(--shadow-sm);
+}
+
 /* ---- Main ---- */
 
 .main {

@@ -209,7 +209,7 @@ mistake-agent/
 ## 9. 当前状态
 
 - **M1–M6 全部完成**（含 Windows 打包实测：`错题 Agent_0.1.0_x64-setup.exe` 在 Windows 环境安装运行通过），设计文档 49 条 ADR（0001–0049）+ 术语表（CONTEXT.md）。
-- **平台服务：设计已定，S1–S3 已落地**（2026-09-29，ADR-0047/0048/0049）。要点：账号（user/teacher/admin，teacher 首期占位）+ 兑换码售卖（无在线支付）+ DeepSeek 三协议中转（`/responses`·`/chat/completions`·`/v1/messages` 全部**透传**，客户端模型适配器零改动）+ 对外按次数/内账按 token + 5h/周/月三滑动窗口 + 多设备同步（默认关闭）。**S1 已交付**：`server/` 独立 Cargo 项目（axum + sqlx + PostgreSQL）、配置 fail-fast、编译期嵌入迁移、`/healthz`·`/readyz`、分级日志与连接串脱敏、CI 独立 job。**S2 已交付**：注册/登录/登出、不透明令牌（SHA-256 落库）、`Argon2id` 口令、`AuthUser`/`RequireAdmin` 提取器、`GET/PATCH /api/v1/me`、管理面账号列表、管理员种子。**S3 已交付**：三协议透传网关（路径别名 + `x-api-key` 兼容）、套餐/权益/用量三表、预扣→结算计费（事务内 advisory lock 串行化同一用户）、阶梯扣次、三滑动窗口、安全护栏（令牌桶限流 / 失败封禁 / 全局并发）。里程碑 S1–S8 见 §10，服务端概览见 §15。
+- **平台服务：设计已定，服务端 S1–S3 与客户端 S5 登录半程已落地**（2026-09-29 服务端 / 2026-09-30 客户端，ADR-0047/0048/0049）。要点：账号（user/teacher/admin，teacher 首期占位）+ 兑换码售卖（无在线支付）+ DeepSeek 三协议中转（`/responses`·`/chat/completions`·`/v1/messages` 全部**透传**，客户端模型适配器零改动）+ 对外按次数/内账按 token + 5h/周/月三滑动窗口 + 多设备同步（默认关闭）。**S1 已交付**：`server/` 独立 Cargo 项目（axum + sqlx + PostgreSQL）、配置 fail-fast、编译期嵌入迁移、`/healthz`·`/readyz`、分级日志与连接串脱敏、CI 独立 job。**S2 已交付**：注册/登录/登出、不透明令牌（SHA-256 落库）、`Argon2id` 口令、`AuthUser`/`RequireAdmin` 提取器、`GET/PATCH /api/v1/me`、管理面账号列表、管理员种子。**S3 已交付**：三协议透传网关（路径别名 + `x-api-key` 兼容）、套餐/权益/用量三表、预扣→结算计费（事务内 advisory lock 串行化同一用户）、阶梯扣次、三滑动窗口、安全护栏（令牌桶限流 / 失败封禁 / 全局并发）。里程碑 S1–S8 见 §10，服务端概览见 §15。
 - **磁盘 IO 铁律 + 数据运行时化落地**（2026-08-10，ADR-0042）：`DomainIo`（数据根目录域内文件：域枚举 + canonicalize 兜底 + 原子写 + 审计）+ `TmpIo`（系统 temp 暂存：`mistake-agent-` 前缀白名单）+ `RelPath`（类型层无目录遍历，fail-closed）；memory 收编（中文路径 base64url 段编码经 DomainIo 落盘）；vision/grading 附件读写、practice 真题池全经 StorageHandle 语义方法（插件零文件句柄）；`data/` 子目录 + 真题池运行时化（`gaokao_pool.json` 文件优先、内置种子兜底，`read_pool_json` 真实链路测试）；verify_geometry.py 维持 include_str!（执行代码非数据）。
 - **指令加载落地**（2026-08-10）：数据根 `AGENTS.md`（教学规则，家长/老师可编辑）全文进主模型系统提示（静态基底之后、debug 段之前，`load_agents_md`，缺失/损坏/超限 64KB 回退静态文本，路径仅由数据根拼接固定文件名）；文件保存即生效（无缓存）；设置页「教学规则」卡片经 `get_rules_status` 展示加载状态 + `open_rules_file` 一键打开编辑。
 - kernel：注册表/两段式契约（用户插件 UserPlugin + 内核插件 KernelPlugin，ADR-0035）/dispatch/loop/RPC/session 调度全链路；四服务全部生产实现——storage（文件持久化：会话 JSONL/错题 JSON/审计 JSONL 轮转）、memory（文件持久化 + MemoryHandle 事件/审计）、model（Responses API + Chat Completions，LiveSettingsModelService 热更新）、compute（BridgeCompute → GUI Pyodide）。
@@ -227,7 +227,7 @@ mistake-agent/
 - 英语练习模式（2026-08-15，ADR-0043）：settings.json `english_mode` 开关，开启后主对话/判分/出题/即时批改/图片理解/会话决策/摘要全链路模型输出切英文，GUI 文案保持中文；数据根 `AGENTS.md` 中文教学规则照常注入（不翻译），由静态层英文人设（B+C 演法：全听懂中文、假装只抓英文关键词、永远只回英文并用英文引导组句）保证输出全英文。
 - 设置页余额卡片（`check_balance` RPC）：DeepSeek `/user/balance` 真实查询，只读不落盘（ADR-0031，ADR-0045 后仅 DeepSeek）。
 - **Standalone**：kernel 内嵌 GUI 进程，mistake-agent 单二进制即可运行（sidecar 已彻底移除）。
-- 验收命令：`cd web && npm install && npm run fetch:pyodide && npm run build`；`cd web && npm run check:pyodide`；`cargo test`（146 项单元）；`cargo test --test live_api -- --ignored`（真实 API：hello 落盘+usage、三套样例、memory 往返、reasoning 回传回归 repro_reasoning、用户新建会话+交接摘要、compute::verify 全链路）；`cargo run --bin mistake-agent`（GUI）。
+- 验收命令：`cd web && npm install && npm run fetch:pyodide && npm run build`；`cd web && npm run check:pyodide`；`cargo test`（179 项单元）；`cargo test --test live_api -- --ignored`（真实 API：hello 落盘+usage、三套样例、memory 往返、reasoning 回传回归 repro_reasoning、用户新建会话+交接摘要、compute::verify 全链路）；`cargo run --bin mistake-agent`（GUI）。
 
 ## 10. 里程碑
 
@@ -250,8 +250,10 @@ mistake-agent/
 | S3 | 中转：三协议透传 + 预扣/结算计费 + 三滑动窗口 + 安全护栏（限流/封禁/全局并发） | ✅ 完成：真实 DeepSeek 三协议端到端跑通（Responses / Chat Completions / Anthropic），流水与权益递增逐项核对；96 项测试全绿 |
 | S4 | 兑换码（注册制 + AES 静态加密）与 admin CLI + 套餐数值校准 | 并发兑换与限额边界测试；CSV 导出对账 |
 | S5 | 客户端接入：登录 + OOBE 可选登录 + 兑换码 + 「账户与套餐」卡片 + 401/402 引导 | **端到端可卖**：登录 → 兑换 → 聊天 → 额度减少 |
+| ↑ S5 登录半程 | ⏳ 已完成（2026-09-30）：客户端账号模块 + `account` 段 + 模型链路切平台 + 登录/注册整页（可跳过）+ 左下角真实退出登录 | ✅ 静态门禁全绿（179 单测 / clippy / fmt / 前端构建）；**端到端未验证**（本机无 PostgreSQL/docker，服务端地址不通） |
+| ↑ S5-B（待 S4） | 兑换码 +「账户与套餐」卡片 + 402 引导 + 回合内 401 气泡（60s 节流） | 依赖 S4 的兑换码与套餐字段 |
 | S6 | 同步服务端：结构化表 + `changes` 光标 + push/pull + `blobs` 预留 | 双客户端收敛一致性测试 |
-| S7 | 客户端同步引擎：storage outbox + `src/kernel/sync/` + 状态 RPC/事件 + 关闭与删除云端数据 | 双设备消息 / 错题 / 记忆收敛一致；既有 146 单测与 live_api 全绿 |
+| S7 | 客户端同步引擎：storage outbox + `src/kernel/sync/` + 状态 RPC/事件 + 关闭与删除云端数据 | 双设备消息 / 错题 / 记忆收敛一致；既有 179 单测与 live_api 全绿 |
 | S8 | 部署：VPS + PostgreSQL + Caddy（自动 TLS）+ systemd + 备份 + `docs/server.md` | 公网可达、可发码售卖 |
 
 **已迁出（不再跟踪）**：Agent core 已按 ADR-0037 提取为独立 `so-lite-agent` crate 仓库，M1-M4 已落地并迁出（v0.1.0 起 mistake-agent 不再包含 `so-lite-agent/`）；M5（crates.io 发布）在新仓库推进。剥离过程的历史归档与 Pi 分层参照见 [docs/plan/so-lite-agent.md](plan/so-lite-agent.md) 与 [docs/adr/0037](adr/0037-so-lite-agent-crate-extraction.md)。
@@ -308,6 +310,7 @@ mistake-agent/
 - **Data root**：`~/Documents/.mistake-agent`，一切数据所在。
 - **Model（模型）**：单份 DeepSeek 配置（v2 默认 `deepseek-flash`，经 Responses API 接入）承担主对话、调度与图片理解；视觉端点已退役（ADR-0045）。
 - **ModelHandle**：注入插件的受限模型服务句柄（带超时/abort/审计）。
+- **Account / Platform token**：平台服务中的用户身份（`role` / `sync_enabled`）/ 登录后签发的 `mka_` 凭据。客户端 `settings.json` 的 `account.token` **非空即平台模式**（模型走中转、用平台额度），为空即本地模式（用自备 Key）——两者只差一次热替换，不重启、不迁移数据。
 - **Command channel**：trigger_command，GUI 触发命令的唯一通道。
 - **Compute backend**：验算执行端（v2 为 WebView 内 Pyodide）。
 
@@ -345,4 +348,5 @@ mistake-agent/
 - **隐私边界**：中转正文不落库；同步数据仅在 `sync_enabled`（**默认关闭**、OOBE 登录后询问）时由客户端**主动上传**入库，支持一键删除云端数据与全量导出；服务端查询强制 `user_id` 隔离。「同步」是用户显式选择的功能，不是服务端对中转流量的记录——这条区别是隐私表述的基石。
 - **工程**：`server/` 为同仓库顶层独立 Cargo 项目（自带 `[workspace]`），验收命令独立：`cd server && cargo test && cargo clippy -- -D warnings`。里程碑 S1–S8 见 §10。
 - **接口契约**：客户端接入看 [docs/server-api.md](docs/server-api.md)（端点、字段、错误码总表、错误分流建议、尚未实现项预告）；客户端侧设计见 [ADR-0048](docs/adr/0048-client-platform-account-integration.md)。
-- **进度**：**S1–S3 已完成**（2026-09-29）。运行方式、端点、配置表与安全护栏见 [server/README.md](server/README.md)；中转面 `/responses`·`/chat/completions`·`/v1/messages`（带 `/v1` 别名）已挂载，三协议**全部透传**（无翻译层），计费口径为「对外按次数、内账按 token 四元组」；账号面 `/api/v1/auth/*`、`/api/v1/me`、`/api/v1/admin/users` 已挂载；套餐/兑换码（S4）与同步（S6）面待挂载。
+- **进度**：**服务端 S1–S3 已完成**（2026-09-29）；**客户端 S5 登录半程已完成**（2026-09-30，服务端代码未动）。运行方式、端点、配置表与安全护栏见 [server/README.md](server/README.md)；中转面 `/responses`·`/chat/completions`·`/v1/messages`（带 `/v1` 别名）已挂载，三协议**全部透传**（无翻译层），计费口径为「对外按次数、内账按 token 四元组」；账号面 `/api/v1/auth/*`、`/api/v1/me`、`/api/v1/admin/users` 已挂载；套餐/兑换码（S4）与同步（S6）面待挂载。
+  客户端侧：`src/kernel/account/`（REST 客户端 + 错误归一化 + 账号服务）+ `settings.json` 的 `account` 段 + `effective_config` 的令牌切换 + 四个账号 RPC 与 `account_changed` 事件；前端登录/注册整页（可跳过）与左下角真实退出登录。**未验证**：注册 → 登录 → 模型走平台 → 退出登录这条链一次都没跑过（本机无 PostgreSQL/docker），走查步骤见 [docs/testing.md](docs/testing.md) §5；另注意新账号无生效权益时中转回 `402 no_entitlement`，要真正用上平台得等 S4 的兑换码。

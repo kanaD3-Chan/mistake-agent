@@ -37,6 +37,15 @@ pub struct SettingsPatch {
     pub nickname: Option<String>,
     pub main_model: Option<ModelConfigPatch>,
     pub vision_model: Option<ModelConfigPatch>,
+    pub account: Option<AccountPatch>,
+}
+
+/// 账号段里允许前端经 `set_settings` 改的字段：**只有服务端地址**。
+/// `token`/`email`/`role`/`sync_enabled` 一律由登录/登出/状态刷新三条 RPC 路径按服务端的
+/// 回执写入，与 `api_key` 同一纪律——不给前端注入令牌的入口（ADR-0048 决策 2）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AccountPatch {
+    pub server_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -46,6 +55,43 @@ pub struct ModelConfigPatch {
     pub api_key: Option<String>,
     pub model: Option<String>,
     pub transport: Option<Transport>,
+}
+
+/// 平台服务账号（ADR-0048）：`token` 非空即"已登录"，模型链路改走平台中转。
+/// 与 `main_model` 分开存——令牌不是 API Key，混进 `api_key` 会让「切换回自备 Key」变成不可逆动作。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountConfig {
+    pub server_url: String,
+    /// 平台令牌明文（`mka_` + 64 位十六进制）。空串 = 本地模式。
+    #[serde(default)]
+    pub token: String,
+    #[serde(default)]
+    pub email: String,
+    /// 服务端返回的角色，客户端只读展示（user / teacher / admin）。
+    #[serde(default)]
+    pub role: String,
+    /// 服务端开关注解：同步引擎属 S6，本轮只落库、不读。
+    #[serde(default)]
+    pub sync_enabled: bool,
+}
+
+impl AccountConfig {
+    pub fn logged_in(&self) -> bool {
+        !self.token.trim().is_empty()
+    }
+}
+
+/// 默认平台服务地址（用户指定）。服务端部署（S8）后仍可在此改。
+pub const DEFAULT_SERVER_URL: &str = "http://8.131.146.250:8080";
+
+fn default_account_config() -> AccountConfig {
+    AccountConfig {
+        server_url: DEFAULT_SERVER_URL.to_string(),
+        token: String::new(),
+        email: String::new(),
+        role: String::new(),
+        sync_enabled: false,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,10 +107,28 @@ pub struct Settings {
     /// 已退役（ADR-0045）：仅为兼容旧 settings.json 保留，运行时不再读取。
     #[serde(default = "default_vision_config")]
     pub vision_model: ModelConfig,
+    /// 平台服务账号（ADR-0048）。旧 settings.json 无该段时按默认值（未登录、默认地址）解析。
+    #[serde(default = "default_account_config")]
+    pub account: AccountConfig,
 }
 
 /// 昵称长度上限（字符数）：侧栏一行放得下，也挡住把整段文字当名字存进来。
 const MAX_NICKNAME_CHARS: usize = 24;
+
+/// 归一化平台服务地址：必须是 http(s)、必须有主机名，尾部斜杠去掉。
+/// 客户端两处拼 URL 的写法不同（`responses_endpoint()` 会剥尾部 `/v1`，chat 适配器按原样拼），
+/// 统一在这里收口，免得"带不带尾斜杠"变成两种行为。
+pub fn normalize_server_url(url: &str) -> Result<String, String> {
+    let trimmed = url.trim().trim_end_matches('/');
+    if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+        return Err("平台服务地址必须是 http(s) 地址".into());
+    }
+    let host = trimmed.split_once("://").map(|(_, h)| h).unwrap_or("");
+    if host.is_empty() {
+        return Err("平台服务地址缺少主机名".into());
+    }
+    Ok(trimmed.to_string())
+}
 
 fn default_vision_config() -> ModelConfig {
     ModelConfig {
@@ -108,6 +172,7 @@ impl Settings {
                     transport: Some(Transport::Responses),
                 },
                 vision_model: default_vision_config(),
+                account: default_account_config(),
             });
         };
         let main_url =
@@ -130,6 +195,7 @@ impl Settings {
                 transport: Some(Transport::Responses),
             },
             vision_model: default_vision_config(),
+            account: default_account_config(),
         })
     }
 
@@ -153,6 +219,13 @@ impl Settings {
         let vision = &mut self.vision_model;
         Self::apply_model_patch(main, patch.main_model.as_ref(), "main_model")?;
         Self::apply_model_patch(vision, patch.vision_model.as_ref(), "vision_model")?;
+        if let Some(account) = &patch.account
+            && let Some(url) = &account.server_url
+        {
+            self.account.server_url = normalize_server_url(url)?;
+        }
+        // AccountPatch 里**没有** token/email/role/sync_enabled 字段：
+        // 类型层面就堵死了经 set_settings 注入令牌或伪造身份（ADR-0048 决策 2）。
         Ok(())
     }
 
@@ -199,12 +272,20 @@ impl Settings {
         Ok(())
     }
 
-    /// 面向前端的公开视图：**绝不包含 api_key**，只给 key_set 标记。
+    /// 面向前端的公开视图：**绝不包含 api_key，也绝不包含 account.token**。
+    /// 账号段只给 `logged_in` 布尔，与 `key_set` 同一纪律。
     pub fn public_view(&self) -> serde_json::Value {
         json!({
             "log_level": self.log_level,
             "english_mode": self.english_mode,
             "nickname": self.nickname,
+            "account": {
+                "logged_in": self.account.logged_in(),
+                "server_url": self.account.server_url,
+                "email": self.account.email,
+                "role": self.account.role,
+                "sync_enabled": self.account.sync_enabled,
+            },
             "main_model": {
                 "api_url": self.main_model.api_url,
                 "model": self.main_model.model,
@@ -242,6 +323,13 @@ mod tests {
                 model: Some("Qwen/Qwen3-VL-32B-Instruct".into()),
                 transport: None,
             },
+            account: AccountConfig {
+                server_url: DEFAULT_SERVER_URL.into(),
+                token: "mka_secret_token".into(),
+                email: "demo@example.test".into(),
+                role: "user".into(),
+                sync_enabled: false,
+            },
         }
     }
 
@@ -254,6 +342,101 @@ mod tests {
         assert!(view["vision_model"].get("api_key").is_none());
         assert_eq!(view["main_model"]["key_set"], true);
         assert_eq!(view["vision_model"]["key_set"], true);
+    }
+
+    #[test]
+    fn public_view_never_leaks_account_token() {
+        let view = sample().public_view();
+        assert!(view["account"].get("token").is_none());
+        assert_eq!(view["account"]["logged_in"], true);
+        assert_eq!(view["account"]["email"], "demo@example.test");
+        assert_eq!(view["account"]["server_url"], DEFAULT_SERVER_URL);
+        // 整串视图里也不该出现令牌明文（防哪天有人手滑改成 json! 里直接塞 config）。
+        assert!(!view.to_string().contains("mka_secret_token"));
+    }
+
+    /// 旧 settings.json（S5 之前写的）没有 account 段，必须仍能解析，
+    /// 且落回"未登录 + 默认地址"——否则升级即崩，用户连 OOBE 都进不去。
+    #[test]
+    fn legacy_settings_without_account_section_still_parses() {
+        let legacy = r#"{
+            "log_level": "info",
+            "english_mode": false,
+            "nickname": "小明",
+            "main_model": {
+                "api_url": "https://api.deepseek.com",
+                "api_key": "sk-legacy",
+                "model": "deepseek-v4-flash",
+                "transport": "responses"
+            }
+        }"#;
+        let settings: Settings = serde_json::from_str(legacy).expect("旧配置必须可解析");
+        assert!(!settings.account.logged_in());
+        assert_eq!(settings.account.server_url, DEFAULT_SERVER_URL);
+        assert_eq!(settings.account.email, "");
+        assert_eq!(settings.public_view()["account"]["logged_in"], false);
+    }
+
+    #[test]
+    fn normalize_server_url_requires_http_and_strips_trailing_slash() {
+        assert_eq!(
+            normalize_server_url("  https://api.example.com/  ").unwrap(),
+            "https://api.example.com"
+        );
+        assert_eq!(
+            normalize_server_url("http://127.0.0.1:8080").unwrap(),
+            "http://127.0.0.1:8080"
+        );
+        // 多层尾斜杠一次去干净，不能只去掉一个。
+        assert_eq!(
+            normalize_server_url("http://127.0.0.1:8080///").unwrap(),
+            "http://127.0.0.1:8080"
+        );
+        assert!(normalize_server_url("ftp://bad").is_err());
+        assert!(normalize_server_url("api.example.com").is_err());
+        assert!(normalize_server_url("http://").is_err());
+        assert!(normalize_server_url("").is_err());
+    }
+
+    #[test]
+    fn account_patch_changes_url_but_cannot_touch_token() {
+        let mut settings = sample();
+        settings
+            .apply_patch(&SettingsPatch {
+                account: Some(AccountPatch {
+                    server_url: Some("https://platform.example.com/".into()),
+                }),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(settings.account.server_url, "https://platform.example.com");
+        // 令牌与身份字段原封不动：AccountPatch 里根本没有这些字段可填。
+        assert_eq!(settings.account.token, "mka_secret_token");
+        assert_eq!(settings.account.email, "demo@example.test");
+        assert_eq!(settings.account.role, "user");
+
+        // 非法地址被拒，且不落地（不能改一半）。
+        let before = settings.account.server_url.clone();
+        assert!(
+            settings
+                .apply_patch(&SettingsPatch {
+                    account: Some(AccountPatch {
+                        server_url: Some("ftp://bad".into()),
+                    }),
+                    ..Default::default()
+                })
+                .is_err()
+        );
+        assert_eq!(settings.account.server_url, before);
+
+        // 不传 account 段 = 不动。
+        settings
+            .apply_patch(&SettingsPatch {
+                account: None,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(settings.account.server_url, before);
     }
 
     #[test]

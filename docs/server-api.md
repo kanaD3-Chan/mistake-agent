@@ -236,6 +236,9 @@ curl -N -X POST https://api.example.com/v1/messages \
 
 ## 6. 客户端接入要点（改客户端时看这一节）
 
+> **落地情况（2026-09-30）：本节描述的「登录半程」客户端已实现**——`src/kernel/account/`（REST 客户端 + 错误归一化 + 账号服务）、`settings.json` 的 `account` 段、模型链路按令牌切换、RPC 四方法（`register` / `login` / `logout` / `get_account_status`）与事件 `account_changed` 都在了；前端有登录/注册页与左下角退出登录。
+> **仍未接入**：兑换码（§7）、套餐用量查询（§7）——所以登录成功后若账号没有生效权益，模型调用会回 `402 no_entitlement`（见 §4.3），**这是正常的**，要真正用上平台中转得等 S4 把兑换码做完。决策留痕见 [ADR-0048](adr/0048-client-platform-account-integration.md) 修订节 R4–R6。
+
 ### 6.1 配置
 
 `settings.json` 新增 `account` 段（与 `main_model` 分开，**不要把令牌塞进 `api_key`**）：
@@ -259,6 +262,10 @@ curl -N -X POST https://api.example.com/v1/messages \
 
 **登录纯可选**：不登录时客户端行为与今天完全一致，只是不能同步设备数据。
 
+默认服务端地址为 `http://8.131.146.250:8080`（`settings.rs` 的 `DEFAULT_SERVER_URL`），用户可在登录页改。写入前经归一化：必须是 `http(s)://` 且带主机名，尾斜杠去掉（`normalize_server_url`）。
+
+**客户端不允许经 `set_settings` 写令牌**：`SettingsPatch.account` 里只有 `server_url` 一个字段，`token` / `email` / `role` / `sync_enabled` 只能由登录 / 登出 / 状态刷新三条路径写。服务端的响应是这四个字段的**唯一来源**——不要在前端做"猜到身份"的推断。
+
 ### 6.2 错误分流
 
 | 状态码 | 客户端行为 |
@@ -278,7 +285,14 @@ curl -N -X POST https://api.example.com/v1/messages \
   不需要新造错误语义。
 - `responses_endpoint()` 会剥掉 `api_url` 尾部的 `/v1`，所以 `server_url` 带不带 `/v1` 都行。
 - 平台模式下 `check_balance`（DeepSeek 余额）语义不再适用——学生花的不是自己的余额，
-  而是平台额度；应改为展示套餐与窗口余量（数据源待 S4 提供）。
+  而是平台额度；应改为展示套餐与窗口余量（数据源待 S4 提供）。客户端目前已加一句提示，**尚未**隐藏这张卡片。
+- 凭据落盘后要热替换模型服务：`LiveSettingsModelService::refresh()`（`set_settings` 已用的同一条路径），
+  **不需要重建 Kernel**，也不需要重启应用。
+- 账号方法走 `CustomMethod` 兜底 + `RpcExtension`（`AppRpc`），不进通用 `Method` 枚举（账号是业务）；
+  服务端的 `{"error":{"code"}}` 的 `code` 原样成为 RPC 错误码，前端直接按 §6.2 分流即可。
+- **实测提醒**：客户端的账号单测全部离线（不打网络、不落盘），「注册 → 登录 → 模型走平台 → 退出登录」
+  这条链截至 2026-09-30 **一次都没跑过**（本机无 PostgreSQL/docker）。真机走查步骤见
+  [docs/testing.md](testing.md) §5 最后一条，**动手前先备份 `settings.json`**。
 
 ---
 

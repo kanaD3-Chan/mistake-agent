@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
+use crate::kernel::account::{AccountError, AccountService};
 use crate::kernel::agent::cache::CacheTracker;
 use crate::kernel::agent::dispatch::Dispatch;
 use crate::kernel::agent::loop_mod::{AgentLoop, SystemPromptProvider, TurnInput, TurnOutcome};
@@ -263,6 +264,14 @@ struct AppRpc {
     cache: Arc<CacheTracker>,
     interrupt_bus: InterruptBus,
     auditor: Auditor,
+    account: Arc<AccountService>,
+}
+
+/// 账号错误的统一出口：`code` 原样透给前端分流（`email_taken` / `invalid_credentials` / …），
+/// `message` 直接展示——服务端的文案已经是面向用户的中文（docs/server-api.md §1），
+/// 客户端不再自己编一套（ADR-0048 决策 6）。
+fn account_rpc_error(e: AccountError) -> RpcError {
+    RpcError::new(e.code(), e.to_string())
 }
 
 #[async_trait]
@@ -346,10 +355,13 @@ impl RpcExtension for AppRpc {
                     let mut model_cfg = snapshot.main_model.clone();
                     model_cfg.api_key = key.trim().to_string();
                     // 只换 key，其余字段照抄当前设置（`..snapshot` 免得加字段时再漏一处）。
-                    let temp_settings = crate::kernel::settings::Settings {
+                    let mut temp_settings = crate::kernel::settings::Settings {
                         main_model: model_cfg,
                         ..snapshot
                     };
+                    // 显式传了 Key 就是在测**那把 Key**：必须把平台令牌摘掉，否则
+                    // effective_config 会拿令牌盖掉 api_url/api_key，测着测着测到平台上去了。
+                    temp_settings.account.token.clear();
                     crate::kernel::plugin::model::build_main_service(&temp_settings)
                         .complete(&model_req, &AbortSignal::new())
                         .await
@@ -374,6 +386,55 @@ impl RpcExtension for AppRpc {
                 Ok(Some(
                     serde_json::to_value(&report).unwrap_or_else(|_| serde_json::json!({})),
                 ))
+            }
+            // ── 平台账号（ADR-0048）：参数解析在这里，状态变更全在 AccountService。
+            "register" => {
+                let email = params
+                    .get("email")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let password = params
+                    .get("password")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let display_name = params.get("display_name").and_then(Value::as_str);
+                self.account
+                    .register(email, password, display_name)
+                    .await
+                    .map(Some)
+                    .map_err(account_rpc_error)
+            }
+            "login" => {
+                let email = params
+                    .get("email")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let password = params
+                    .get("password")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                self.account
+                    .login(email, password)
+                    .await
+                    .map(Some)
+                    .map_err(account_rpc_error)
+            }
+            "logout" => self
+                .account
+                .logout()
+                .await
+                .map(Some)
+                .map_err(account_rpc_error),
+            "get_account_status" => {
+                let revalidate = params
+                    .get("revalidate")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                self.account
+                    .status(revalidate)
+                    .await
+                    .map(Some)
+                    .map_err(account_rpc_error)
             }
             "get_cache_stats" => {
                 let metas = self
@@ -452,6 +513,18 @@ impl Kernel {
             ));
 
         let interrupt_bus = InterruptBus::new();
+        // 账号服务与 AppRpc 共用同一批句柄：令牌一落地，模型服务当场热更新、
+        // 在飞回合收 ConfigChanged、GUI 收 account_changed——三件事必须同源，不能各拿各的。
+        let account = Arc::new(
+            AccountService::new(
+                settings.clone(),
+                main_service.clone(),
+                interrupt_bus.clone(),
+                auditor.clone(),
+                events.clone(),
+            )
+            .map_err(|e| format!("账号服务构造失败：{e}"))?,
+        );
         let app_rpc = AppRpc {
             settings: settings.clone(),
             store: storage.clone(),
@@ -460,6 +533,7 @@ impl Kernel {
             cache: cache.clone(),
             interrupt_bus: interrupt_bus.clone(),
             auditor: auditor.clone(),
+            account,
         };
 
         KernelBuilder::new()

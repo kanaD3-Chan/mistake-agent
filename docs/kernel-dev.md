@@ -19,6 +19,12 @@ Kernel 不直接调用用户插件之间的内部函数。用户插件通过工�
 
 ```text
 src/kernel/
+├── account/                        平台账号（ADR-0048）
+│   ├── mod.rs                      公共面
+│   ├── client.rs                   到平台服务端的 REST 调用
+│   ├── error.rs                    AccountError 与令牌失效判定
+│   ├── service.rs                  账号服务（唯一读写 settings.account 的地方）
+│   └── tests.rs
 ├── agent/
 │   ├── dispatch.rs                 统一工具/命令执行
 │   ├── loop_mod/                   Agent loop
@@ -220,11 +226,16 @@ Caller
 - `GetState`、`ListSessions`、`ReadSession`、`CreateSession`、`OpenSession`、`RenameSession`、`DeleteSession`、`ListTools`；
 - `EditMessage`、`SwitchBranch`（会话内版本浏览，不承担会话边界语义）；
 - `GetSettings`、`SetSettings`、`TestConnection`、`CheckBalance`、`GetCacheStats`；
+- `Register`、`Login`、`Logout`、`GetAccountStatus`（平台账号，ADR-0048）；
 - `ComputeResult`：GUI/Pyodide 回执。
+
+后三组（以及 `GetSettings` 起）走的是 `CustomMethod` 兜底 + `RpcExtension`（`AppRpc`），不属于通用 `Method` 枚举——业务方法一律按这条路走，通用枚举只留不依赖使用方业务的子集（见 `docs/TODO.md` 的 RPC 技术债条目）。账号的四个方法名与 `Login` / `Logout` 等枚举变体不同名，且**参数解析之外的一切都在 `AccountService` 里**（请求服务端 → 落 settings → 刷新模型链路 → 发事件 → 记审计），RPC 分支只做解析，避免出现"令牌变了但模型服务还指着老地址"的半截状态。
+
+账号相关的安全约束（改这里之前先读）：`AccountService` 是**唯一**写 `settings.account` 的地方；`AccountPatch` 只有 `server_url` 一个字段，令牌不可经 `set_settings` 注入；审计与日志**只记邮箱，不记令牌**；只有服务端明确回 `invalid_token` / `missing_token` / `account_disabled` 才清本地令牌（`AccountError::invalidates_token`），断网一律不清。登出**不碰任何本地数据**（错题本 / 会话 / 记忆）。
 
 会话相关的三个写方法（`CreateSession` / `OpenSession` / `DeleteSession`）在回合在飞时一律拒绝（`turn_in_progress`）——在飞的任务持有旧会话 key，中途换/删会让它写错地方。
 
-内核向 GUI 输出 `Event`：消息增量、reasoning、工具开始/结束/进度、回合结束、会话空闲提示、会话标题更新（`SessionTitleUpdated`，侧栏刷新用）、审计错误、压缩和缓存统计等。
+内核向 GUI 输出 `Event`：消息增量、reasoning、工具开始/结束/进度、回合结束、会话空闲提示、会话标题更新（`SessionTitleUpdated`，侧栏刷新用）、账号变化（`AccountChanged`，只带邮箱）、审计错误、压缩和缓存统计等。
 
 新增 GUI 能力优先扩展 `Method`/`RpcFrame` 和 handler；不要另开任意文本命令通道。工具/命令触发统一走 `trigger_command` 或现有 RPC 方法。
 

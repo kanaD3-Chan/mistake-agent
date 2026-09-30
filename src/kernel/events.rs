@@ -51,6 +51,13 @@ pub enum Event {
     Compaction {
         session: SessionKey,
     },
+    /// 平台账号状态变化（登录 / 登出 / 令牌失效被清）：侧栏菜单据此在
+    /// 「登录平台服务」与「退出登录」之间切换（ADR-0048）。
+    /// 载荷**不含令牌**，只有"登没登"和邮箱。
+    AccountChanged {
+        logged_in: bool,
+        email: String,
+    },
     /// 缓存命中统计更新：回合 usage 落盘后实时推送（载荷 = get_cache_stats 快照）。
     CacheStatsUpdated {
         stats: serde_json::Value,

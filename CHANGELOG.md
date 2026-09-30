@@ -12,6 +12,34 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- **Platform accounts in the client — login half (S5)**
+  ([ADR-0048](docs/adr/0048-client-platform-account-integration.md)):
+  the client can now register, log in, and log out against the platform
+  service, with the model chain switching to the relay automatically.
+  A new `src/kernel/account/` module owns every read and write of the
+  new `account` section in `settings.json` — REST calls, error
+  normalisation, and the single place that decides whether a token is
+  worth clearing (`invalidates_token`: only an explicit
+  `invalid_token` / `missing_token` / `account_disabled` from the server
+  clears it, so a network blip never logs a student out). Four RPCs —
+  `register`, `login`, `logout`, `get_account_status` — go through the
+  `RpcExtension` path rather than the generic `Method` enum, plus an
+  `account_changed` event and three audit records that carry the email
+  and never the token. `AccountPatch` exposes only `server_url`, so a
+  token cannot be injected through `set_settings`; the public settings
+  view never returns it either. The relay is chosen purely by the token
+  being non-empty, so not logging in behaves exactly as before. On the
+  frontend, a full-screen login/register page (`LoginGate.vue` +
+  `AccountAuthForm.vue`) appears on first run with a discreet "skip and
+  stay local" escape hatch that is remembered; the sidebar account menu
+  becomes real — "登录平台服务" when logged out, and email, role badge,
+  and a working "退出登录" when logged in. Logging out never touches
+  local data (mistake book, sessions, memory).
+  **Not included** (deferred to S5-B, pending S4): redemption codes, the
+  account/package card, 402 guidance, and the in-turn 401 bubble.
+  **Not verified end to end** — the machine has no PostgreSQL or Docker,
+  so the register → log in → relay → log out path has never been
+  exercised; see `docs/testing.md` §5.
 - **Platform service — DeepSeek relay, quota billing, and security guardrails (S3)**
   ([ADR-0047](docs/adr/0047-server-account-package-relay.md)): an
   authenticated, quota-metered **pass-through gateway** for three

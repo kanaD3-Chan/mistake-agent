@@ -2,14 +2,14 @@
 
 ## 1. 测试策略
 
-- **单元测试**：`cargo test`（165 项），覆盖注册表校验、dispatch、session 调度（新建/切换/删除会话、归档、交接摘要、会话标题生成、空闲提示、压缩、中断）、storage（文件/内存/DomainIo/TmpIo/标题-激活-删除三操作/存量会话迁移）、memory（文件 CRUD/路径越界/旧布局迁移）、model（SSE/usage 解析）、settings（patch/public_view）、prompt（英语模式规则 + AGENTS.md 加载/回退/拼接 + 会话标题提示）、compute 桥接与 handler、RPC 会话方法（wire 解析 + handler 行为）、插件入口（schema/模板/聚合）。
+- **单元测试**：`cargo test`（179 项），覆盖注册表校验、dispatch、session 调度（新建/切换/删除会话、归档、交接摘要、会话标题生成、空闲提示、压缩、中断）、storage（文件/内存/DomainIo/TmpIo/标题-激活-删除三操作/存量会话迁移）、memory（文件 CRUD/路径越界/旧布局迁移）、model（SSE/usage 解析）、settings（patch/public_view）、**account（账号出错归一化、令牌失效判定、URL 拼接、公开视图不泄漏令牌）**、prompt（英语模式规则 + AGENTS.md 加载/回退/拼接 + 会话标题提示）、compute 桥接与 handler、RPC 会话方法（wire 解析 + handler 行为）、插件入口（schema/模板/聚合）。
 - **真实 API 集成测试**：`cargo test --test live_api -- --ignored --nocapture`，直接接 DeepSeek（无 key 自动跳过）。
 - **样例端到端**：`samples/` 三套作业图片逐一走 上传→OCR→判分→归档 全链路。
 - **前端自检**：`cd web && npm run check:pyodide`（真实加载 Pyodide WASM 并执行 Python：算术、符号计算（sympy 解方程/求导/积分）、物理（单位换算/运动学）、numpy 数值、异常路径）；`node scripts/katex-check.mjs`（KaTeX 行内/块级/化学式/矩阵/非法公式容错）。
 
-## 2. 用例与结果（单元测试 2026-09-29 实测；真实 API 部分为 2026-08-10 实测，本次未复验）
+## 2. 用例与结果（单元测试 2026-09-30 实测；真实 API 部分为 2026-08-10 实测，本次未复验）
 
-### 单元测试：165 项全过
+### 单元测试：179 项全过
 
 | 模块 | 覆盖点 |
 |---|---|
@@ -25,6 +25,10 @@
 | storage IO | `RelPath` 遍历向量、域隔离、TmpIo temp 白名单、运行时真题池文件优先/种子兜底 |
 | model | SSE 解析、usage 解析（response.usage 顶层）、ToolCall 展开 |
 | settings | patch 校验、public_view 不含 key、english_mode 补丁生效、昵称裁剪/空串清空/按字符限长 |
+| settings（`account` 段） | 旧 `settings.json` 无 `account` 段仍可解析（`serde(default)`）、`public_view().account` **不含令牌**、`normalize_server_url` 强制 http(s) 且去尾斜杠、`AccountPatch` 只改得了 `server_url`（`token`/`email`/`role` 一个都动不了） |
+| account | `endpoint` 拼接（含尾斜杠与多斜杠兜底）、空邮箱/空口令在**本地**拦下（不打网络、不落盘、不留审计）、未登录时 `logout` 幂等（不动服务端、不报错、不留审计）、`status(false)` 纯本地读且公开视图不出现令牌明文、服务端地址改过后 `status(false)` 回当前值而非默认值 |
+| account（错误） | 服务端 `{"error":{"code,message}}` 解析为 `Rejected`；**令牌失效判定只认** `invalid_token` / `missing_token` / `account_disabled`，`Unreachable` / `BadResponse` 一律不清令牌；响应体不可读时回退 `http_{status}` |
+| model（路由） | `effective_config`：令牌空 → 用 `main_model`；令牌非空 → `api_url`/`api_key` 被 `server_url`/令牌覆盖，`transport` 保持用户选择 |
 | prompt | english_mode 开启时各提示词追加 English Immersion Mode 规则（含会话标题提示） |
 | compute | BridgeCompute 回执/取消 |
 | 插件 | 12 插件入口参数 schema、practice 模板生成、report/exam/tracking 聚合断言 |
@@ -51,7 +55,7 @@
 
 ### 门禁
 
-`cargo fmt --check` ✅ ｜ `cargo clippy --all-targets -- -D warnings` ✅ ｜ `cargo test` ✅（165 项）｜ `cd web && npm run build` ✅ ｜ GUI 冒烟（Wayland 下启动 8s 无崩溃）✅
+`cargo fmt --check` ✅ ｜ `cargo clippy --all-targets -- -D warnings` ✅ ｜ `cargo test` ✅（179 项）｜ `cd web && npm run build` ✅ ｜ GUI 冒烟（Wayland 下启动 8s 无崩溃）✅（前两项为 2026-09-30 实测，GUI 冒烟为早期实测、本轮未复验）
 
 > 存量会话迁移（ADR-0044 收尾）：单测覆盖拆分/幂等/`.bak`/单 Active 不变量，且在**真实数据副本**上做过一次走查（`sessions/` 复制到临时目录后调 `migrate_legacy_sessions`，2026-09-23）：`0ad77bb4….jsonl` 的 152 条消息拆成 **22 条**会话（1 条 Active + 21 条 Archived，消息数合计仍为 155）、原文件生成 1 个 `.bak`、`c3cd91d9….jsonl` 无边界不拆、二次运行文件集合不变。**应用内首次启动的真实迁移尚未走查**：先 `cp -r ~/Documents/.mistake-agent/sessions ~/Documents/.mistake-agent/sessions.pre-migration` 备份，再启动应用确认同一结果。前端会话列表（新建/重命名/删除/切换）无自动化测试基建，靠构建 + 真机走查。
 
@@ -91,3 +95,14 @@
 - 至少 3 套**真实手写作业照片**端到端（当前 1 真实 + 2 合成）。
 - 多页 PDF（含图片页）渲染 OCR。
 - 判分质量评估：多学科样例人工核对（任务书要求 Prompt 评估报告）。
+- **平台账号登录半程（S5）端到端——一次都没跑过**（2026-09-30 状态）。本机无 PostgreSQL、无 docker，服务端又是 postgres-only，`http://8.131.146.250:8080` 不通，因此「注册 → 登录 → 模型走平台 → 退出登录」这条链**完全没有验证**，目前只到离线单测 + 静态门禁 + 前端构建。走查步骤：
+
+  1. **先备份**：`C:\Users\<用户>\Documents\.mistake-agent\settings.json` 复制一份。走查会经 `Settings::save()` 改写它（单测刻意避开这条链就是为了不动真配置）。
+  2. 起服务端：`cd server && docker compose up -d && cp .env.example .env && cargo run` → `127.0.0.1:8080`。不要依赖阿里云那台（未放行端口，见 ADR-0048 修订 R9）。
+  3. 起客户端，首屏门禁把「平台服务地址」改成 `http://127.0.0.1:8080` → 注册 → 登录。预期：门禁关闭，侧栏左下角出现邮箱与角色。
+  4. **平台中转连通性需要先发一张套餐**：新账号没有权益，中转会回 402 `no_entitlement`（`server/README.md` 有挂 `monthly_pro` 的手工 SQL）。挂上后在聊天页发一条消息，确认模型正常回答、`usage_events` 有流水——此时客户端**没配任何 API Key**，账是平台付的。
+  5. 把 `settings.json` 的 `account.token` 改成 `mka_` + 64 个 `0` → 重启 → 预期侧栏状态行提示登录已失效、令牌被清；**错题本 / 会话 / 记忆一条都不能少**（登出与令牌失效都不得碰本地数据）。
+  6. 点「退出登录」→ 预期回到未登录态、模型链路切回自备 Key、`account.server_url` 保留。
+  7. **回归红线**：不登录（清空 `token`）时行为必须与无账号版本完全一致。
+
+  未覆盖（留给 S5-B）：回合内令牌过期的文案（当前只发 `TurnEnd`，学生看到"回答突然没了"）、402 引导、兑换码与套餐卡。

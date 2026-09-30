@@ -232,6 +232,15 @@ _Avoid_: 直接把 chemfig 当 KaTeX 宏包引入（会静默渲染失败）、�
 平台服务中的用户身份（`users` 表）：`role`（user / teacher / admin）、`sync_enabled`、状态；首个 admin 由 bootstrap 或 CLI 创建，不开放管理员自助注册。客户端经 `settings.json` 的 `account` 段持有登录态（ADR-0047/0048）。
 _Avoid_: 用户（易与本地昵称 `nickname` 混淆——昵称只是显示称呼，不构成身份）
 
+**Platform token（平台令牌）**:
+`account.token` 里那串凭据：服务端签发的不透明 `mka_` + 32 字节十六进制，明文**只回一次**，库里只存 SHA-256，默认 90 天有效。**非空即"已登录"**——这是唯一的登录判据（`AccountConfig::logged_in`），也是模型链路在「自备 Key / 平台中转」之间二选一的开关（`effective_config`）。
+持有它的纪律：日志与审计只记邮箱不记令牌；`public_view()` 永不返回它；`AccountPatch` 里没有这个字段（类型层面堵死前端注入）；只有服务端明确回 `invalid_token` / `missing_token` / `account_disabled` 才清它，断网一律不清。
+_Avoid_: API Key（两者是不同凭据：一个花自己的钱、一个花平台额度）、会话令牌（指 Web 会话，与设备令牌不是一套东西）
+
+**Account mode（账号模式）**:
+客户端的两种运行形态，由 `account.token` 是否为空决定。**本地模式**（令牌空）：模型走 `main_model` 的自备 Key / 本地 Ollama，与无账号时完全一致——这是默认形态，不是降级。**平台模式**（令牌非空）：`api_url` 与 `api_key` 被 `server_url` 与令牌覆盖，`transport` 与模型名不动（模型名由服务端强制）。两种模式共用同一份 `main_model`，切换只热替换模型服务，不重启、不改数据根、不迁移任何本地数据。
+_Avoid_: 离线模式 / 在线模式（都是联网的，差别在谁付账）、登录态（只描述状态不描述链路）
+
 **Platform service（平台服务）**:
 可选接入的服务端能力合集（账号、DeepSeek 中转、多设备同步）。**不构成使用前提**：不登录时客户端与纯本地形态完全一致（ADR-0047/0048）。
 _Avoid_: 云端版（暗示数据必须在云上）、后端（指实现而非能力）

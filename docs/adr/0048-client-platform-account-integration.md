@@ -105,3 +105,49 @@ account.token 为空 → 沿用 main_model（自备 Key / 本地 Ollama）
 - **OOBE 流程变化**：三步 → 四步（末步可跳过）；`docs/usage.md` 需同步。
 - **文档同步**：`PROJECT.md`、`CONTEXT.md`（Account / Platform service 术语）、`docs/usage.md`（登录、兑换码、同步开关、左下角菜单）、`docs/api.md`（新增 RPC 与 `account_changed` 事件）、`docs/testing.md`（平台模式验收项）。
 - **未验证项**：登录态下的会话内工具链路（含图片 `input_image`）经中转的端到端复验；令牌过期时的批量失败体验（需避免每个回合都弹错）。
+
+## 修订（2026-09-30，S5 登录半程落地）
+
+S5 原定「登录 + OOBE 可选登录 + 兑换码 + 账户与套餐卡 + 401/402 引导」一次性交付，但 **S4（兑换码 / 套餐）在 `server/` 里一个接口都没开工**，`docs/server-api.md` §1 也明确写着「客户端不要提前接」。故拆成两段：本轮只交付**登录半程**（注册 / 登录 / 登出 / 账号状态 / 模型链路切平台 / 左下角菜单真实化），兑换码与套餐相关的全部内容顺延为 **S5-B**（依赖 S4）。以下是落地时对上面决策的偏离与新事实。
+
+### R1. 登录入口是**首屏门禁（可跳过）**，不是 OOBE 第 4 步
+
+决策 4 原定在 OOBE 末尾追加可跳过的登录步。落地改为独立整页 `web/src/components/LoginGate.vue`：启动且未登录时盖在最上层，页脚留「先跳过，用本地模式」。理由是顺序——OOBE 是「没配 Key」时的向导，而登录后根本不需要自备 Key；已登录时 OOBE 直接不出现（`onMounted` 的触发条件收紧为 `!key_set && !logged_in`）。
+
+跳过的选择记在 `localStorage: ma:gate-skipped`，**不是单向门**：侧栏菜单里的「登录平台服务」随时能把门禁叫回来。改写的是决策 4 的**位置与形态**，"登录纯可选"这一内核不变。
+
+### R2. 「账户与套餐」卡片未做，余额卡片只加一句语义提示
+
+决策 5 的套餐名 / 三窗口余量 / 兑换码输入框全部依赖 S4 的 `GET /me` 扩展字段，本轮只落地决策 5 里"余额卡片语义调整"的一半：平台模式下在余额卡片顶部加一行提示「已登录平台服务：模型调用走平台额度，下面这个 DeepSeek 余额不再被使用」（`SettingsPage.vue` 的 `.balance-note`）。**没有**按平台模式隐藏余额卡片——自备 Key 与平台模式共用同一份 `main_model`，隐藏反而会在切换瞬间闪断。
+
+### R3. 错误引导只做「令牌失效即清 + 一句提示」，没有回合内气泡
+
+决策 7 的 401 引导落地为：内核 `get_account_status { revalidate: true }` 打一次 `GET /me`，**只有服务端明确回 `invalid_token` / `missing_token` / `account_disabled` 才清本地令牌**；`Unreachable` / `BadResponse` 一律只回 `reason`，本地一个字节不动。这个判定被收在唯一一处 `AccountError::invalidates_token()`，前端 `revalidateAccount()` 的行为是它的镜像。GUI 启动时静默校一次，失效时写侧栏状态行。
+
+**已知缺口（留给 S5-B）**：令牌在会话中途过期时，模型层仍是 `AuthFailed` → `StopReason::InternalAbort { ModelUnavailable }` → 只发 `TurnEnd`，**回合内没有任何文案**。决策 7 设想的「60s 节流 + 系统气泡 + 去登录按钮」需要 `ChatPage.vue` 的回合结束分支配合，本轮未动，学生此时看到的现象仍是"回答突然没了"。
+
+### R4. `redeem_code` RPC 未做（依赖 S4）
+
+决策 3 的方法表里 `redeem_code` 与 `get_account_status` 的套餐字段均无服务端支撑，一律不做。实际落地的方法只有 4 个：`register` / `login` / `logout` / `get_account_status`。
+
+### R5. `get_account_status` 只返回账号视图 + 可选 `reason`，不返回套餐字段
+
+返回 `{logged_in, server_url, email, role, sync_enabled, reason?}`，其中 `reason ∈ {token_invalid, account_disabled, unreachable, server_error}`。这是**追加式**契约：S4 补齐套餐字段后前端无需改动即可读取。
+
+### R6. `set_account_sync` RPC 未做；`AccountPatch` 只有 `server_url`
+
+决策 1 原定 `AccountPatch { server_url, sync_enabled }`，落地砍到只剩 `server_url`——`sync_enabled` 没有写入方（同步引擎属 S6），留一个无人调用的字段只是待腐化的接口。`token` / `email` / `role` / `sync_enabled` 四个字段**在类型层面**就无法经 `set_settings` 注入，只由登录 / 登出 / 状态刷新三条路径写（`settings.rs` 的 `AccountPatch` 定义处有注释说明）。
+
+### R7. 服务端地址的编辑入口在**门禁上**，不在设置页
+
+决策 8 说"设置页可改"。落地改为：地址输入框在 `AccountAuthForm` 里（登录/注册之前），已登录时**没有**地址输入框——改地址必须先退出登录。理由是避免"令牌属于 A 服务器、地址却指向 B"的半截状态，这比"改地址方便"重要。默认值 `DEFAULT_SERVER_URL = http://8.131.146.250:8080`，写入时经 `normalize_server_url()` 归一化（强制 http(s)、必须有主机名、去尾斜杠）。
+
+### R8. 计数与门禁现状（2026-09-30 实测）
+
+`cargo fmt --check` / `cargo clippy --all-targets -- -D warnings` / `cargo test --lib`（**179 项**，其中账号相关 14 项）/ `cd web && npm run build` 全绿。原文与 §影响里的「146 项单测」是本文档写作时的旧数，现以 179 为准。服务端代码本轮**未改动**。
+
+### R9. 端到端**尚未验证**
+
+本机无 PostgreSQL、无 docker，`8.131.146.250:8080` 不通，`server/` 又是 postgres-only ——「注册 → 登录 → 模型走平台 → 退出登录」这条链**一次都没跑过**。验证只到离线单测 + 静态门禁 + 前端构建。真机走查步骤、以及「动手前先备份 `settings.json`」的提醒见 `docs/testing.md` §5。
+
+单测不覆盖登录/登出落盘链路是**刻意的**：那条路径会经 `Settings::save()` 写真实数据根目录（`~/Documents/.mistake-agent/settings.json`），跑一遍就把用户配置覆盖了（`src/kernel/account/tests.rs` 模块头有说明）。

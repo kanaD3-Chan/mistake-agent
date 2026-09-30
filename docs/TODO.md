@@ -70,7 +70,11 @@
       **验收证据**：96 项测试全绿（82 单测 + 13 账号集成 + 3 端点）；clippy `-D warnings` / `fmt --check` 干净；**真实 DeepSeek 三协议端到端跑通**——Responses（input 12/output 1）、Chat Completions（input 38/output 37/reasoning 35）、Anthropic（input 38/output 20，含 `ping` 未知事件被容忍），三笔流水 `billed_uses=1` 且权益 `used_uses 3/10`；预检 402（无权益）/ 400（非流式）/ 401（伪造令牌）逐项符合预期。
       **遗留**：CI 内的中转集成测试（mock 上游 + 抓包夹具）待补——目前 CI 覆盖单测，真实链路靠手工验收。
 - [ ] S4 套餐与兑换码：`redemption_codes` + `redeem_batches`（**注册制 + AES-256-GCM 静态加密**，ADR-0047 修订 R10）+ admin CLI（生成码/发放/作废/CSV 导出）+ 套餐数值按真实用量校准 + 令牌模型白名单与软删
-- [ ] S5 客户端接入：登录 + OOBE 可选登录 + 兑换码 + 「账户与套餐」卡片 + 401/402 引导 → **端到端可卖**
+- [~] **S5 客户端接入**：登录 + OOBE 可选登录 + 兑换码 + 「账户与套餐」卡片 + 401/402 引导 → **端到端可卖**
+      **登录半程已落地（2026-09-30）**：新增 `src/kernel/account/`（REST 客户端 + 错误归一化 + 账号服务），`settings.json` 增 `account` 段（ADR-0048 决策 1），模型链路按令牌空/非空在「自备 Key / 平台中转」间切换（`effective_config`）；RPC 四方法 `register` / `login` / `logout` / `get_account_status`（走 `AppRpc` 扩展）+ 事件 `account_changed` + 审计三条；前端新增登录门禁整页 `LoginGate.vue`（可跳过，`localStorage: ma:gate-skipped`）与表单 `AccountAuthForm.vue`，左下角用户菜单真实化（未登录 →「登录平台服务」，已登录 → 邮箱/角色 +「退出登录」）。
+      验收证据：`cargo fmt --check` / `cargo clippy --all-targets -- -D warnings` / `cargo test --lib`（179 项，账号相关 14 项）/ `cd web && npm run build` 全绿。**服务端代码未动**。
+      **未做（→ S5-B，均在 S4 之后）**：兑换码 `redeem_code`、`set_account_sync`、「账户与套餐」卡片（套餐/三窗口余量）、402 引导、回合内 401 气泡 + 60s 节流（见 [ADR-0048](adr/0048-client-platform-account-integration.md) 修订 R2–R6）。
+      **未验证**：端到端「注册 → 登录 → 模型走平台 → 退出登录」一次都没跑过——本机无 PostgreSQL/docker，`8.131.146.250:8080` 不通。走查步骤见 [docs/testing.md](testing.md) §5。
 - [ ] S6 同步服务端：结构化表 + `changes` 光标 + push/pull + `blobs` 预留
 - [ ] S7 客户端同步引擎：storage outbox + `src/kernel/sync/` + 状态 RPC/事件 + 关闭与删除云端数据
 - [ ] S8 部署：VPS 实测 + 备份策略 + `docs/server.md` 运维手册。（**容器化已完成**：`server/Dockerfile`、`docker-compose.prod.yml`（PostgreSQL + 服务端 + Caddy 自动 TLS）、`deploy/Caddyfile`、`.dockerignore`；**待办**：VPS 上真机走一遍、数据库备份与恢复演练、日志轮转、fail2ban 落地、运维手册）
@@ -163,7 +167,7 @@
 
 合并远程 PR #12 时 `get_rules_status`（教学规则状态查询）选择保留在通用 `Method` 枚举（`WireMethod::Generic` 直分派），而远程已将 `test_connection` / `check_balance` / `get_cache_stats` 迁入 `CustomMethod`/`WireMethod::Custom` 兜底 + `RpcExtension`（`AppRpc`，src/kernel/agent/rpc/mod.rs）。当前两套机制并存：
 
-- 走扩展兜底（新架构）：`get_settings` / `set_settings` / `compute_result` / `test_connection` / `check_balance` / `get_cache_stats`；
+- 走扩展兜底（新架构）：`get_settings` / `set_settings` / `compute_result` / `test_connection` / `check_balance` / `get_cache_stats` / **`register` / `login` / `logout` / `get_account_status`（S5 账号四方法，2026-09-30 按新架构落地）**；
 - 走通用枚举（旧架构残留）：`get_rules_status`。
 
 **待办**：后续把 `get_rules_status` 从通用 `Method` 枚举迁入 `AppRpc` 扩展，统一走 `CustomMethod` 兜底，彻底移除通用枚举对业务方法的依赖。迁移时同步删 `Method::GetRulesStatus` 枚举变体与 `handlers.rs` 对应分支，前端 wire 不变（`{method:"get_rules_status"}` 仍兼容）。

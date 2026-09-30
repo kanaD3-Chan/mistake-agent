@@ -8,12 +8,31 @@ use crate::kernel::plugin::services::{
     AbortSignal, Domain, DomainIo, ModelError, ModelRequest, ModelResponse, ModelService,
     ModelStream, RelPath,
 };
-use crate::kernel::settings::{Settings, Transport};
+use crate::kernel::settings::{DEFAULT_SERVER_URL, ModelConfig, Settings, Transport};
 
 use super::*;
 
+/// 生效的模型配置（ADR-0048 决策 2）：`account.token` 非空 → 走平台中转，否则沿用 `main_model`。
+///
+/// **只换地址与密钥**：`model` / `transport` 保持用户的选择。中转面两种协议都认
+/// （`/responses` 与 `/v1/chat/completions`），模型名由服务端强制覆盖，客户端无需跟着改。
+pub fn effective_config(settings: &Settings) -> ModelConfig {
+    let mut cfg = settings.main_model.clone();
+    if settings.account.logged_in() {
+        // 手工编辑过 settings.json 把地址清空时别拼出空 URL——用默认地址兜住。
+        let url = settings.account.server_url.trim();
+        cfg.api_url = if url.is_empty() {
+            DEFAULT_SERVER_URL.to_string()
+        } else {
+            url.to_string()
+        };
+        cfg.api_key = settings.account.token.clone();
+    }
+    cfg
+}
+
 pub fn build_main_service(settings: &Settings) -> Arc<dyn ModelService> {
-    let cfg = &settings.main_model;
+    let cfg = effective_config(settings);
     let model = cfg
         .model
         .clone()
@@ -190,6 +209,54 @@ mod tests {
     use crate::kernel::plugin::model::responses::{ResponsesModelService, SseParser};
     use crate::kernel::plugin::services::{ItemKind, ModelChunk};
     use futures_util::StreamExt;
+
+    fn settings_with_account(token: &str, server_url: &str) -> Settings {
+        Settings {
+            log_level: crate::kernel::logger::Level::Info,
+            english_mode: false,
+            nickname: String::new(),
+            main_model: ModelConfig {
+                api_url: "https://api.deepseek.com".into(),
+                api_key: "sk-self".into(),
+                model: Some("deepseek-v4-flash".into()),
+                transport: Some(Transport::ChatCompletions),
+            },
+            vision_model: ModelConfig {
+                api_url: String::new(),
+                api_key: String::new(),
+                model: None,
+                transport: None,
+            },
+            account: crate::kernel::settings::AccountConfig {
+                server_url: server_url.into(),
+                token: token.into(),
+                email: String::new(),
+                role: String::new(),
+                sync_enabled: false,
+            },
+        }
+    }
+
+    /// 模型链路走本地还是走平台，只由 `account.token` 决定（ADR-0048 决策 2）。
+    #[test]
+    fn effective_config_switches_on_token_only() {
+        // 未登录：原样用自备 Key。
+        let cfg = effective_config(&settings_with_account("", "https://platform.example.com"));
+        assert_eq!(cfg.api_url, "https://api.deepseek.com");
+        assert_eq!(cfg.api_key, "sk-self");
+
+        // 已登录：地址与密钥换成平台，模型 ID 与接入方式保持用户选择
+        // ——模型名由服务端强制覆盖，transport 两种面都认，客户端不跟着改。
+        let cfg = effective_config(&settings_with_account("mka_tok", "https://platform.example.com"));
+        assert_eq!(cfg.api_url, "https://platform.example.com");
+        assert_eq!(cfg.api_key, "mka_tok");
+        assert_eq!(cfg.model.as_deref(), Some("deepseek-v4-flash"));
+        assert_eq!(cfg.transport, Some(Transport::ChatCompletions));
+
+        // 手工把 settings.json 的地址编辑成空白：不能拼出空 URL。
+        let cfg = effective_config(&settings_with_account("mka_tok", "   "));
+        assert_eq!(cfg.api_url, DEFAULT_SERVER_URL);
+    }
 
     #[test]
     fn sse_parser_handles_events() {
