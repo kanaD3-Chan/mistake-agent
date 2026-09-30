@@ -239,6 +239,7 @@ async fn quota_windows_match_enforcement_and_count_reserved_rows() {
         user_id,
         Uuid::new_v4(),
         "quota-consistency-probe",
+        None,
         "responses",
         "deepseek-flash",
     )

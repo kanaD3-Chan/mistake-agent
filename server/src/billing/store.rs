@@ -14,21 +14,28 @@ use uuid::Uuid;
 
 use super::model::{
     Entitlement, EntitlementSource, EntitlementView, Plan, PlanKind, PlanView, QuotaDecision,
-    QuotaDenial, QuotaView, Settlement, WindowUsage, WindowView,
+    QuotaDenial, QuotaView, Settlement, UsageStatus, WindowUsage, WindowView,
 };
-use super::quota;
+use super::{ladder, quota};
 
 /// advisory lock 的命名空间：与其他用途的锁互不干扰。
 const LOCK_NAMESPACE: i32 = 0x4D41_0001;
 
-/// 预留结果：放行（带裁决上下文与流水 id）或拒绝（带可对用户解释的原因）。
+/// 回合续跑的有效窗口：学生一次提问里的工具往返/辅助调用都在这段时间内（ADR-0047 修订 R14）。
+const TURN_WINDOW_MINUTES: i32 = 15;
+
+/// 单回合允许的**免费**往返上限：超过就重新按正常路径计费，防"把一切都塞进一个回合"。
+const TURN_MAX_REQUESTS: i64 = 12;
+
+/// 预留结果：放行（带流水 id 与承担计费的权益）或拒绝（带可对用户解释的原因）。
 #[derive(Debug, Clone)]
 pub enum ReserveOutcome {
     Granted {
         event_id: i64,
-        plan: Plan,
-        entitlement: Entitlement,
-        windows: WindowUsage,
+        /// 承担本回合计费的权益（免费往返也记在它名下，便于对账）
+        entitlement_id: Uuid,
+        /// `false` = 本回合的续跑（工具往返/辅助调用），**不扣次**
+        charged: bool,
     },
     Denied(QuotaDenial),
 }
@@ -153,7 +160,15 @@ async fn window_usage_tx(
 
 // ---------- 预留 / 结算 ----------
 
-/// 预留一次用量（R2）：裁决通过则权益 +1 次并写 `reserved` 流水，否则返回拒绝原因。
+/// 预留（R2 + R14 回合制）：裁决通过则写 `reserved` 流水，否则返回拒绝原因。
+///
+/// **一个用户回合对外只算一次提问**：回合的首个请求按裁决扣 1 次；同回合的后续往返
+/// （Agent loop 的工具轮、会话标题等辅助调用）**不扣次**，只写一条 `billed_uses = 0`
+/// 的流水记 token。阶梯会按该回合累计 token 把最终扣次上调到 2/3 次——见
+/// [`recompute_turn_charge`]。
+///
+/// 防滥用：免费往返受 [`TURN_WINDOW_MINUTES`] 与 [`TURN_MAX_REQUESTS`] 双重约束，
+/// 超出即回到正常路径重新扣次。
 ///
 /// 裁决与预留必须原子——所以整段在一个事务里，且事务开头就取用户级 advisory lock。
 pub async fn reserve(
@@ -161,6 +176,7 @@ pub async fn reserve(
     user_id: Uuid,
     token_id: Uuid,
     request_id: &str,
+    turn_id: Option<&str>,
     protocol: &str,
     model: &str,
 ) -> Result<ReserveOutcome, sqlx::Error> {
@@ -171,6 +187,60 @@ pub async fn reserve(
         .execute(&mut *tx)
         .await?;
 
+    // ---------- 同一回合的续跑：不扣次 ----------
+    if let Some(turn) = turn_id {
+        #[derive(sqlx::FromRow)]
+        struct TurnHead {
+            first_event_id: Option<i64>,
+            entitlement_id: Option<Uuid>,
+            seen: i64,
+        }
+        let head = sqlx::query_as::<_, TurnHead>(
+            // 取**第一条**流水的权益：记费落在它头上，续跑也跟着它走
+            // （PostgreSQL 没有 max(uuid) 聚合，所以用 array_agg 排序取首元素）。
+            "SELECT min(id) AS first_event_id,
+                    (array_agg(entitlement_id ORDER BY id))[1] AS entitlement_id,
+                    count(*) AS seen
+               FROM usage_events
+              WHERE user_id = $1 AND turn_id = $2
+                AND created_at > now() - make_interval(mins => $3)",
+        )
+        .bind(user_id)
+        .bind(turn)
+        .bind(TURN_WINDOW_MINUTES)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        if head.first_event_id.is_some()
+            && head.seen < TURN_MAX_REQUESTS
+            && let Some(entitlement_id) = head.entitlement_id
+        {
+            let event_id = sqlx::query_scalar::<_, i64>(
+                "INSERT INTO usage_events
+                     (user_id, entitlement_id, token_id, request_id, turn_id, protocol, model,
+                      billed_uses, status)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 'reserved')
+                 RETURNING id",
+            )
+            .bind(user_id)
+            .bind(entitlement_id)
+            .bind(token_id)
+            .bind(request_id)
+            .bind(turn)
+            .bind(protocol)
+            .bind(model)
+            .fetch_one(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            return Ok(ReserveOutcome::Granted {
+                event_id,
+                entitlement_id,
+                charged: false,
+            });
+        }
+    }
+
+    // ---------- 回合首个请求（或没有回合标识）：正常裁决并扣 1 次 ----------
     let Some((entitlement, plan)) = find_entitlement_tx(&mut tx, user_id).await? else {
         // 没有生效权益：事务随 drop 回滚，锁随之释放
         return Ok(ReserveOutcome::Denied(QuotaDenial::NoEntitlement));
@@ -189,14 +259,16 @@ pub async fn reserve(
 
     let event_id = sqlx::query_scalar::<_, i64>(
         "INSERT INTO usage_events
-             (user_id, entitlement_id, token_id, request_id, protocol, model, billed_uses, status)
-         VALUES ($1, $2, $3, $4, $5, $6, 1, 'reserved')
+             (user_id, entitlement_id, token_id, request_id, turn_id, protocol, model,
+              billed_uses, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 1, 'reserved')
          RETURNING id",
     )
     .bind(user_id)
     .bind(grant.entitlement.id)
     .bind(token_id)
     .bind(request_id)
+    .bind(turn_id)
     .bind(protocol)
     .bind(model)
     .fetch_one(&mut *tx)
@@ -205,28 +277,30 @@ pub async fn reserve(
 
     Ok(ReserveOutcome::Granted {
         event_id,
-        plan: grant.plan,
-        entitlement: grant.entitlement,
-        windows: grant.windows,
+        entitlement_id: grant.entitlement.id,
+        charged: true,
     })
 }
 
-/// 结算预留行（R2）：写入终态与真实用量，并按最终扣次补齐权益差额。
+/// 结算预留行（R2 + R14）：写入终态与真实用量，然后**整回合重算扣次**。
 ///
-/// 预留时已记 1 次，所以这里只做 `最终扣次 − 1` 的调整：
-/// 阶梯上调则补扣（+1/+2），上游失败则退回（−1）。幂等——同一行只结算一次。
+/// 幂等——同一行只结算一次（`status = 'reserved'` 是前置条件）；扣次的最终归属由
+/// [`recompute_turn_charge`] 决定，所以工具轮/辅助调用谁先结算都不影响结果。
+///
+/// 返回本回合的最终扣次（`None` = 这行已被结算过）。
 pub async fn settle(
     pool: &PgPool,
     event_id: i64,
-    entitlement_id: Uuid,
+    _entitlement_id: Uuid,
     settlement: Settlement,
-) -> Result<bool, sqlx::Error> {
+    ladder: &[u64],
+) -> Result<Option<i32>, sqlx::Error> {
     let mut tx = pool.begin().await?;
 
     let updated = sqlx::query(
         "UPDATE usage_events SET
              input_tokens = $2, cached_tokens = $3, output_tokens = $4, reasoning_tokens = $5,
-             billed_uses = $6, latency_ms = $7, status = $8
+             latency_ms = $6, status = $7
          WHERE id = $1 AND status = 'reserved'",
     )
     .bind(event_id)
@@ -234,7 +308,6 @@ pub async fn settle(
     .bind(as_i64(settlement.usage.cached))
     .bind(as_i64(settlement.usage.output))
     .bind(as_i64(settlement.usage.reasoning))
-    .bind(i32::try_from(settlement.billed_uses).unwrap_or(i32::MAX))
     .bind(settlement.latency_ms)
     .bind(settlement.status.as_str())
     .execute(&mut *tx)
@@ -243,21 +316,118 @@ pub async fn settle(
 
     if updated == 0 {
         // 已经被结算过（重复回调/重试）：保持幂等，不再动权益
-        return Ok(false);
+        return Ok(None);
     }
 
-    let delta = i64::from(settlement.billed_uses) - 1;
-    if delta != 0 {
-        sqlx::query(
-            "UPDATE entitlements SET used_uses = GREATEST(used_uses + $2, 0) WHERE id = $1",
-        )
-        .bind(entitlement_id)
-        .bind(i32::try_from(delta).unwrap_or(i32::MAX))
-        .execute(&mut *tx)
-        .await?;
-    }
+    let (user_id, turn_id): (Uuid, Option<String>) =
+        sqlx::query_as("SELECT user_id, turn_id FROM usage_events WHERE id = $1")
+            .bind(event_id)
+            .fetch_one(&mut *tx)
+            .await?;
+
+    let charged =
+        recompute_turn_charge(&mut tx, user_id, turn_id.as_deref(), event_id, ladder).await?;
     tx.commit().await?;
-    Ok(true)
+    Ok(Some(charged))
+}
+
+/// 整回合重算扣次（ADR-0047 修订 R14）。
+///
+/// 规则：**一个回合对外只算一次提问**；阶梯按该回合**累计 token** 决定 1/2/3 次，
+/// 记费固定落在回合的**第一条**流水上，同回合其余流水 `billed_uses` 归零（token 明细照记）。
+///
+/// 幂等：每次结算都整回合重算一遍，所以工具往返与辅助调用的先后顺序不影响最终账目。
+/// `turn_id` 为 `None` 时该行自成一回合，行为与改动前一致。
+async fn recompute_turn_charge(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: Uuid,
+    turn_id: Option<&str>,
+    row_id: i64,
+    ladder: &[u64],
+) -> Result<i32, sqlx::Error> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: i64,
+        status: String,
+        tokens: i64,
+        billed: i32,
+        entitlement_id: Option<Uuid>,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT id, status,
+                (COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0))::bigint AS tokens,
+                billed_uses AS billed, entitlement_id
+           FROM usage_events
+          WHERE user_id = $1
+            AND (($2::text IS NULL AND id = $3) OR ($2::text IS NOT NULL AND turn_id = $2))
+          ORDER BY id",
+    )
+    .bind(user_id)
+    .bind(turn_id)
+    .bind(row_id)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    let Some(first) = rows.first() else {
+        return Ok(0);
+    };
+    let in_flight = rows
+        .iter()
+        .any(|r| r.status == UsageStatus::Reserved.as_str());
+    let answered = rows.iter().any(|r| r.status == UsageStatus::Ok.as_str());
+    let aborted = rows
+        .iter()
+        .any(|r| r.status == UsageStatus::Aborted.as_str());
+    let total: u64 = rows
+        .iter()
+        .map(|r| u64::try_from(r.tokens).unwrap_or(0))
+        .sum();
+
+    // 回合还在飞：维持已记的 1 次，等最后一条结算再按累计 token 上调。
+    // 有答复才算钱；只有中断（客户端断开）时至少 1 次；全失败则 0 次。
+    let desired: i32 = if in_flight {
+        first.billed.max(1)
+    } else if answered {
+        i32::try_from(ladder::billed_uses(total, ladder)).unwrap_or(i32::MAX)
+    } else if aborted {
+        i32::try_from(ladder::billed_uses(total, ladder))
+            .unwrap_or(i32::MAX)
+            .max(1)
+    } else {
+        0
+    };
+
+    if first.billed != desired {
+        sqlx::query("UPDATE usage_events SET billed_uses = $2 WHERE id = $1")
+            .bind(first.id)
+            .bind(desired)
+            .execute(&mut **tx)
+            .await?;
+        if let Some(entitlement_id) = first.entitlement_id {
+            sqlx::query(
+                "UPDATE entitlements SET used_uses = GREATEST(used_uses + $2, 0) WHERE id = $1",
+            )
+            .bind(entitlement_id)
+            .bind(desired - first.billed)
+            .execute(&mut **tx)
+            .await?;
+        }
+    }
+
+    // 同回合其余流水一律 0 次（token 明细保留）
+    sqlx::query(
+        "UPDATE usage_events SET billed_uses = 0
+          WHERE user_id = $1 AND id <> $2 AND billed_uses <> 0
+            AND $3::text IS NOT NULL AND turn_id = $3",
+    )
+    .bind(user_id)
+    .bind(first.id)
+    .bind(turn_id)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(desired)
 }
 
 /// u64 → i64：token 数量不可能接近 i64 上限，饱和转换只为"任何输入都不 panic"。

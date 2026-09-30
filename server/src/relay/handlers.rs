@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use axum::body::{Body, Bytes};
 use axum::extract::{OriginalUri, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
@@ -32,6 +32,7 @@ pub async fn relay(
     OriginalUri(uri): OriginalUri,
     auth: AuthUser,
     client: ClientIp,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, RelayError> {
     let protocol = Protocol::from_path(uri.path()).ok_or(RelayError::UnknownPath)?;
@@ -71,12 +72,23 @@ pub async fn relay(
     let request_id = Uuid::new_v4().to_string();
     let started = Instant::now();
 
+    // 回合标识（ADR-0047 修订 R14）：客户端为每个用户消息生成一次，同一回合里的工具往返
+    // 与会话标题等辅助调用沿用同一个值——服务端据此把"一次提问"合并成一次扣次。
+    // 没有它（老客户端/第三方客户端）就退回"一个请求一个回合"，行为与改动前一致。
+    let turn_id = headers
+        .get("x-ma-turn-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && value.len() <= 64)
+        .map(str::to_string);
+
     // ---------- 预扣（R2）：额度不足就不该消耗上游 ----------
     let reservation = billing::reserve(
         &state.pool,
         auth.user.id,
         auth.token_id,
         &request_id,
+        turn_id.as_deref(),
         protocol.as_str(),
         &state.config.deepseek_model,
     )
@@ -85,9 +97,9 @@ pub async fn relay(
         ReserveOutcome::Denied(denial) => return Err(RelayError::Quota(denial)),
         ReserveOutcome::Granted {
             event_id,
-            entitlement,
+            entitlement_id,
             ..
-        } => (event_id, entitlement.id),
+        } => (event_id, entitlement_id),
     };
 
     // ---------- 转发 ----------
@@ -175,14 +187,14 @@ pub async fn relay(
 
         let result = probe.finish();
         let settlement = settlement_for(&result, &ladder, started.elapsed());
-        match billing::settle(&pool, event_id, entitlement_id, settlement).await {
-            Ok(true) => tracing::info!(
+        match billing::settle(&pool, event_id, entitlement_id, settlement, &ladder).await {
+            Ok(Some(billed_uses)) => tracing::info!(
                 user_id = %user_id,
                 event_id,
                 model = %model,
                 protocol = protocol.as_str(),
                 status = settlement.status.as_str(),
-                billed_uses = settlement.billed_uses,
+                billed_uses,
                 input_tokens = settlement.usage.input_total,
                 cached_tokens = settlement.usage.cached,
                 output_tokens = settlement.usage.output,
@@ -191,7 +203,7 @@ pub async fn relay(
                 client_gone,
                 "中转用量已结算"
             ),
-            Ok(false) => tracing::warn!(event_id, "该流水已被结算过，跳过"),
+            Ok(None) => tracing::warn!(event_id, "该流水已被结算过，跳过"),
             Err(error) => tracing::error!(
                 error = %error, event_id, user_id = %user_id,
                 "用量结算失败：账目可能不准，需人工核对"
@@ -211,6 +223,9 @@ pub async fn relay(
 }
 
 /// 由旁路解析结果判定扣次（R2 结算 + R3 中断规则）。
+///
+/// 注意（R14 回合制）：这里算的是**单个请求**的阶梯值，仅作日志与兜底参考；
+/// 对外扣次的最终归属由 `store::recompute_turn_charge` 按**回合累计 token** 决定。
 fn settlement_for(result: &ProbeResult, ladder: &[u64], elapsed: Duration) -> Settlement {
     let latency_ms = latency_ms(elapsed);
     let usage = result.usage.unwrap_or_default();
@@ -251,7 +266,10 @@ async fn settle_once(
     entitlement_id: Uuid,
     settlement: Settlement,
 ) {
-    if let Err(error) = billing::settle(&state.pool, event_id, entitlement_id, settlement).await {
+    let ladder = &state.config.billing_ladder_tokens;
+    if let Err(error) =
+        billing::settle(&state.pool, event_id, entitlement_id, settlement, ladder).await
+    {
         tracing::error!(
             error = %error, event_id,
             "用量结算失败（失败路径）：账目可能不准，需人工核对"
