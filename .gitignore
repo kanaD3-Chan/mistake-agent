@@ -16,3 +16,6 @@ extract_installed.py
 installed-icon-*.png
 new-exe-icon-32512.bin
 docs/competition/
+
+# 临时产物（测试隔离数据根、后台服务日志等），不得入库
+.tmp-*

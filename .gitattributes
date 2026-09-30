@@ -1,0 +1,19 @@
+# 换行符策略：**字节即契约的文件必须锁死 LF**。
+#
+# 为什么必须显式声明：仓库此前没有 .gitattributes，Windows 上 `core.autocrlf` 会把
+# 检出的文本文件写成 CRLF。对绝大多数源码无害，但**迁移文件不行**——
+# sqlx 校验已应用迁移的 SHA-384，字节一变就报
+# `migration N was previously applied but has been modified` 并**拒绝启动**。
+#
+# 实测（2026-09-30）：`server/migrations/0002_billing.sql` 在 git 里是 LF，检出成 CRLF 后
+# 校验和从 5b0699b7…（DB 记录值）变成 faa5415d…，本地服务起不来。
+#
+# ⚠️ 同样的坑会砸到已部署的服务端：镜像是在"工作区恰好是 LF"时构建的，所以现在没事；
+# 但只要有人从 CRLF 的 Windows 工作区重新构建镜像，新的二进制内嵌的就是 CRLF 版本，
+# 用它启动一台已有数据的服务器就会迁移校验失败。所以这条规则不是洁癖，是防事故。
+server/migrations/*.sql text eol=lf
+
+# 容器与编排文件同理：CRLF 混进 Dockerfile 的续行或 Caddyfile 会出难查的怪问题。
+server/Dockerfile text eol=lf
+server/docker-compose*.yml text eol=lf
+server/deploy/** text eol=lf

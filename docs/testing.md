@@ -96,7 +96,7 @@
 - 至少 3 套**真实手写作业照片**端到端（当前 1 真实 + 2 合成）。
 - 多页 PDF（含图片页）渲染 OCR。
 - 判分质量评估：多学科样例人工核对（任务书要求 Prompt 评估报告）。
-- **平台账号登录半程（S5）端到端——一次都没跑过**（2026-09-30 状态）。本机无 PostgreSQL、无 docker，服务端又是 postgres-only，`http://8.131.146.250:8080` 不通，因此「注册 → 登录 → 模型走平台 → 退出登录」这条链**完全没有验证**，目前只到离线单测 + 静态门禁 + 前端构建。走查步骤：
+- **平台账号登录半程（S5）端到端——已在 kernel 层跑通**（2026-09-30，自动化用例见本节末；GUI 手点路径仍未走）。本机无 PostgreSQL、无 docker，服务端又是 postgres-only，`http://8.131.146.250:8080` 不通，因此「注册 → 登录 → 模型走平台 → 退出登录」这条链**完全没有验证**，目前只到离线单测 + 静态门禁 + 前端构建。走查步骤：
 
   1. **先备份**：`C:\Users\<用户>\Documents\.mistake-agent\settings.json` 复制一份。走查会经 `Settings::save()` 改写它（单测刻意避开这条链就是为了不动真配置）。
   2. 起服务端：`cd server && docker compose up -d && cp .env.example .env && cargo run` → `127.0.0.1:8080`。不要依赖阿里云那台（未放行端口，见 ADR-0048 修订 R9）。
@@ -107,3 +107,26 @@
   7. **回归红线**：不登录（清空 `token`）时行为必须与无账号版本完全一致。
 
   未覆盖（留给 S5-B）：回合内令牌过期的文案（当前只发 `TurnEnd`，学生看到"回答突然没了"）、402 引导、兑换码与套餐卡。
+
+### 平台账号端到端走查（2026-09-30 已跑通）
+
+自动化用例：[tests/live_platform.rs](../tests/live_platform.rs)（3 条 `#[ignore]`），补上了上面那条"一次都没跑过"的空白。
+
+```powershell
+# 隔离数据根：USERPROFILE 指向临时目录 → Settings::save() 只写那里，真 settings.json 一个字节不动
+$env:USERPROFILE = "$PWD\.tmp-live-platform"
+$env:PLATFORM_SERVER_URL = "http://127.0.0.1:8080"   # 或 http://8.131.146.250:8080
+cargo test --test live_platform -- --ignored --nocapture
+```
+
+**可信点**：`main_model` 刻意填**假 key + 死地址**（`127.0.0.1:1`），所以"模型答出来了"本身就是证据——请求走的是平台令牌；令牌若没生效，DeepSeek 会拿假 key 回 401。
+
+| 用例 | 覆盖 | 结果 |
+|---|---|---|
+| `walkthrough_register_and_login_persist_token` | 注册 → 登录 → 令牌落盘（`mka_`）→ 邮箱/角色写入 account 段 → **`main_model.api_key` 不被污染** → 登出清令牌且保留 `server_url` | 本地 ✅（远端未跑，开发者说注册暂不需要） |
+| `walkthrough_platform_turn_without_any_self_key` | **零配置走平台**：假 key + 死地址仍拿到模型回答，且带 usage | 本地 ✅ ｜ 远端 ✅ |
+| `walkthrough_platform_rejects_account_without_entitlement` | 无权益账号必须被平台**明确拒绝**（402 `no_entitlement`），**不静默退回自备 key** | 本地 ✅ |
+
+**仍未覆盖**（留给 S5-B）：GUI 手点路径（首屏门禁/侧栏状态行）、回合内令牌过期的文案、402 引导气泡、兑换码与套餐卡。
+
+**顺带发现（未修）**：账号客户端对超时**没有重试**。远端走查时 `register` 撞上公网间歇性丢包，直接抛 `Unreachable("请求超时")`——学生网络一抖就会看到这个。可考虑对幂等 GET（`/me`）加退避重试，并把 409（邮箱已存在）当作"已注册，转去登录"而不是失败。

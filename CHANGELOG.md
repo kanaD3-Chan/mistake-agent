@@ -12,6 +12,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- **平台账号端到端走查自动化**：新增 `tests/live_platform.rs`（3 条 `#[ignore]`），用"隔离数据根 + 假 key + 死地址"证明"登录后零配置走平台"，并钉住无权益账号必须拿到 402 `no_entitlement` 而不是静默退回自备 key（补 docs/testing.md §5 的空白，见 ADR-0048 修订 R11）
+- **`.gitattributes`**：锁定 `server/migrations/*.sql`（及 Dockerfile/compose/Caddyfile）为 LF。此前 Windows 的 `core.autocrlf` 会把检出的迁移文件写成 CRLF，导致 sqlx 校验和不匹配、**服务端拒绝启动**（`migration 2 was previously applied but has been modified`）；同一坑会在有人从 CRLF 工作区重建镜像时砸到已部署的服务器
+
 - **Platform accounts in the client — login half (S5)**
   ([ADR-0048](docs/adr/0048-client-platform-account-integration.md)):
   the client can now register, log in, and log out against the platform
