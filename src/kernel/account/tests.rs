@@ -81,6 +81,15 @@ fn harness(account: AccountConfig) -> Harness {
     }
 }
 
+/// 未登录时查额度：不打网络、不报错，只回一个 reason（前端据此提示而不是崩掉卡片）。
+#[tokio::test]
+async fn quota_without_login_returns_reason() {
+    let h = harness(account(""));
+    let view = h.service.quota().await.expect("未登录查额度不该报错");
+    assert_eq!(view["reason"], "not_logged_in");
+    assert!(view.get("windows").is_none(), "未登录不该编造窗口：{view}");
+}
+
 #[test]
 fn endpoint_joins_without_double_slash() {
     assert_eq!(

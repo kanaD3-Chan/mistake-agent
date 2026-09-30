@@ -2,14 +2,14 @@
 
 ## 1. 测试策略
 
-- **单元测试**：`cargo test`（181 项），覆盖注册表校验、dispatch、session 调度（新建/切换/删除会话、归档、交接摘要、会话标题生成、空闲提示、压缩、中断）、storage（文件/内存/DomainIo/TmpIo/标题-激活-删除三操作/存量会话迁移）、memory（文件 CRUD/路径越界/旧布局迁移）、model（SSE/usage 解析）、settings（patch/public_view）、**account（账号出错归一化、令牌失效判定、URL 拼接、公开视图不泄漏令牌）**、prompt（英语模式规则 + AGENTS.md 加载/回退/拼接 + 会话标题提示）、compute 桥接与 handler、RPC 会话方法（wire 解析 + handler 行为）、插件入口（schema/模板/聚合）。
+- **单元测试**：`cargo test`（182 项），覆盖注册表校验、dispatch、session 调度（新建/切换/删除会话、归档、交接摘要、会话标题生成、空闲提示、压缩、中断）、storage（文件/内存/DomainIo/TmpIo/标题-激活-删除三操作/存量会话迁移）、memory（文件 CRUD/路径越界/旧布局迁移）、model（SSE/usage 解析）、settings（patch/public_view）、**account（账号出错归一化、令牌失效判定、URL 拼接、公开视图不泄漏令牌）**、prompt（英语模式规则 + AGENTS.md 加载/回退/拼接 + 会话标题提示）、compute 桥接与 handler、RPC 会话方法（wire 解析 + handler 行为）、插件入口（schema/模板/聚合）。
 - **真实 API 集成测试**：`cargo test --test live_api -- --ignored --nocapture`，直接接 DeepSeek（无 key 自动跳过）。
 - **样例端到端**：`samples/` 三套作业图片逐一走 上传→OCR→判分→归档 全链路。
 - **前端自检**：`cd web && npm run check:pyodide`（真实加载 Pyodide WASM 并执行 Python：算术、符号计算（sympy 解方程/求导/积分）、物理（单位换算/运动学）、numpy 数值、异常路径）；`node scripts/katex-check.mjs`（KaTeX 行内/块级/化学式/矩阵/非法公式容错）。
 
 ## 2. 用例与结果（单元测试 2026-09-30 实测；真实 API 部分为 2026-08-10 实测，本次未复验）
 
-### 单元测试：181 项全过
+### 单元测试：182 项全过
 
 | 模块 | 覆盖点 |
 |---|---|
@@ -56,7 +56,7 @@
 
 ### 门禁
 
-`cargo fmt --check` ✅ ｜ `cargo clippy --all-targets -- -D warnings` ✅ ｜ `cargo test` ✅（181 项）｜ `cd web && npm run build` ✅ ｜ GUI 冒烟（Wayland 下启动 8s 无崩溃）✅（前两项为 2026-09-30 实测，GUI 冒烟为早期实测、本轮未复验）
+`cargo fmt --check` ✅ ｜ `cargo clippy --all-targets -- -D warnings` ✅ ｜ `cargo test` ✅（182 项）｜ `cd web && npm run build` ✅ ｜ GUI 冒烟（Wayland 下启动 8s 无崩溃）✅（前两项为 2026-09-30 实测，GUI 冒烟为早期实测、本轮未复验）
 
 > 存量会话迁移（ADR-0044 收尾）：单测覆盖拆分/幂等/`.bak`/单 Active 不变量，且在**真实数据副本**上做过一次走查（`sessions/` 复制到临时目录后调 `migrate_legacy_sessions`，2026-09-23）：`0ad77bb4….jsonl` 的 152 条消息拆成 **22 条**会话（1 条 Active + 21 条 Archived，消息数合计仍为 155）、原文件生成 1 个 `.bak`、`c3cd91d9….jsonl` 无边界不拆、二次运行文件集合不变。**应用内首次启动的真实迁移尚未走查**：先 `cp -r ~/Documents/.mistake-agent/sessions ~/Documents/.mistake-agent/sessions.pre-migration` 备份，再启动应用确认同一结果。前端会话列表（新建/重命名/删除/切换）无自动化测试基建，靠构建 + 真机走查。
 
@@ -125,6 +125,7 @@ cargo test --test live_platform -- --ignored --nocapture
 |---|---|---|
 | `walkthrough_register_and_login_persist_token` | 注册 → 登录 → 令牌落盘（`mka_`）→ 邮箱/角色写入 account 段 → **`main_model.api_key` 不被污染** → 登出清令牌且保留 `server_url` | 本地 ✅（远端未跑，开发者说注册暂不需要） |
 | `walkthrough_platform_turn_without_any_self_key` | **零配置走平台**：假 key + 死地址仍拿到模型回答，且带 usage | 本地 ✅ ｜ 远端 ✅ |
+| `walkthrough_quota_view_has_three_windows` | 额度卡片数据源：客户端解析服务端三窗口契约（key/limit/used/remaining） | 本地 ✅ |
 | `walkthrough_platform_rejects_account_without_entitlement` | 无权益账号必须被平台**明确拒绝**（402 `no_entitlement`），**不静默退回自备 key** | 本地 ✅ |
 
 **仍未覆盖**（留给 S5-B）：GUI 手点路径（首屏门禁/侧栏状态行）、回合内令牌过期的文案、402 引导气泡、兑换码与套餐卡。

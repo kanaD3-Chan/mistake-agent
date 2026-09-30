@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use reqwest::Client;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::error::AccountError;
 
@@ -115,6 +115,21 @@ impl AccountClient {
             )
             .await?;
         Self::parse::<UserEnvelope>(&body).map(|e| e.user)
+    }
+
+    /// 平台额度视图（ADR-0047 修订 R13）：`GET /api/v1/me/quota`。
+    ///
+    /// **原样透传服务端的 JSON**（契约见 docs/server-api.md §2.6）：窗口数量与字段由服务端
+    /// 说了算，客户端不在这里重新建模——否则服务端加一个窗口，客户端就得跟着发版。
+    pub async fn quota(&self, server_url: &str, token: &str) -> Result<Value, AccountError> {
+        let body = self
+            .send(
+                self.http
+                    .get(endpoint(server_url, "/api/v1/me/quota"))
+                    .bearer_auth(token),
+            )
+            .await?;
+        Self::parse::<Value>(&body)
     }
 
     /// 发请求并把 4xx/5xx 定型成错误；成功则交出响应体原文。

@@ -151,6 +151,36 @@ impl AccountService {
         }
     }
 
+    /// 平台额度（三窗口用量）：登录态那张卡片的数据源。
+    ///
+    /// 与 [`status`] 同一条纪律：**只有服务端明确说令牌无效才清令牌**；断网/服务端错误
+    /// 只回一个 `reason`，本地不动——一次网络抖动不该把学生踢下线。
+    /// 返回值是服务端契约原文，失败时只有 `reason`（前端据此给提示，而不是崩掉整张卡）。
+    pub async fn quota(&self) -> Result<Value, AccountError> {
+        let (server_url, token) = self.snapshot();
+        if token.is_empty() {
+            return Ok(json!({ "reason": "not_logged_in" }));
+        }
+        match self.client.quota(&server_url, &token).await {
+            Ok(view) => Ok(view),
+            Err(e) if e.invalidates_token() => {
+                self.clear_identity()?;
+                self.announce("", false);
+                log::warn!("平台令牌已失效，本地令牌已清除（查询额度时）");
+                Ok(json!({ "reason": "token_invalid" }))
+            }
+            Err(e) => {
+                let reason = if matches!(&e, AccountError::Unreachable(_)) {
+                    "unreachable"
+                } else {
+                    "server_error"
+                };
+                log::warn!("平台额度未取到（{reason}）：{e}");
+                Ok(json!({ "reason": reason }))
+            }
+        }
+    }
+
     fn server_url(&self) -> String {
         self.settings
             .read()

@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { Icon } from "@iconify/vue";
 
 const props = defineProps({ kernel: { type: Object, required: true } });
@@ -120,10 +120,65 @@ function money(symbol, currency) {
   return currency === "CNY" ? `¥${symbol}` : `${symbol} ${currency || ""}`.trim();
 }
 
-onMounted(() => {
-  load();
-  loadBalance();
+// ── 平台额度（登录态那张卡，ADR-0048 修订 R10）──
+// 数据源是服务端 `GET /api/v1/me/quota`（5 小时 / 7 天 / 30 天三个滑动窗口）。
+// 登录后**不再显示与平台无关的 DeepSeek 余额**：那是学生自己的账，与积分卡无关。
+const quota = ref(null);
+const quotaLoading = ref(false);
+const quotaError = ref("");
+
+const QUOTA_REASON_TEXT = {
+  not_logged_in: "未登录平台账号。",
+  token_invalid: "登录已失效，请重新登录平台账号。",
+  unreachable: "连不上平台服务，稍后可点「刷新」重试。",
+  server_error: "平台服务暂时不可用，稍后可点「刷新」重试。",
+};
+const quotaReasonText = computed(
+  () => QUOTA_REASON_TEXT[quota.value?.reason] || "额度暂时取不到。",
+);
+
+const WINDOW_LABELS = { five_hour: "近 5 小时", week: "近 7 天", month: "近 30 天" };
+function windowLabel(key) {
+  return WINDOW_LABELS[key] || key;
+}
+
+// 使用百分比 = 已用 / 上限。不限次数的窗口返回 0（页面显示「不限」而不是一条空进度条）。
+function windowPercent(w) {
+  if (!w || !w.limit) return 0;
+  return Math.max(0, Math.min(100, Math.round((w.used / w.limit) * 100)));
+}
+
+// 重置时刻按**本地时间**渲染：服务端给的是滑动窗口的 UTC 时刻，不是自然日整点。
+function formatMoment(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function loadQuota() {
+  quotaLoading.value = true;
+  quotaError.value = "";
+  try {
+    quota.value = await props.kernel.call("get_account_quota", {}, 20000);
+  } catch (e) {
+    quotaError.value = `额度查询失败：${e.message}`;
+  } finally {
+    quotaLoading.value = false;
+  }
+}
+
+// 登录状态变化（门禁里刚登录 / 侧栏登出）时切换卡片的取数目标。
+watch(accountLoggedIn, (loggedIn) => {
+  if (loggedIn) loadQuota();
+});
+
+onMounted(async () => {
+  await load();
   loadRulesStatus();
+  // 登录态只查平台额度：DeepSeek 余额与学生无关，那次请求也不必再发。
+  if (accountLoggedIn.value) loadQuota();
+  else loadBalance();
 });
 </script>
 
@@ -146,61 +201,122 @@ onMounted(() => {
     <section class="card balance-card">
       <div class="balance-head">
         <h3>
-          <span class="section-icon"><Icon icon="mdi:wallet-outline" width="18" /></span>账户余额
+          <span class="section-icon"><Icon icon="mdi:wallet-outline" width="18" /></span>
+          {{ accountLoggedIn ? "平台额度" : "账户余额" }}
         </h3>
         <button
           class="btn ghost"
-          :disabled="balanceLoading"
-          :title="'刷新余额'"
-          @click="loadBalance"
+          :disabled="accountLoggedIn ? quotaLoading : balanceLoading"
+          :title="accountLoggedIn ? '刷新额度' : '刷新余额'"
+          @click="accountLoggedIn ? loadQuota() : loadBalance()"
         >
-          <Icon icon="mdi:refresh" width="18" :class="{ spin: balanceLoading }" />
-          {{ balanceLoading ? "查询中…" : "刷新" }}
+          <Icon
+            icon="mdi:refresh"
+            width="18"
+            :class="{ spin: accountLoggedIn ? quotaLoading : balanceLoading }"
+          />
+          {{ (accountLoggedIn ? quotaLoading : balanceLoading) ? "查询中…" : "刷新" }}
         </button>
       </div>
 
-      <p v-if="accountLoggedIn" class="balance-note">
-        <Icon icon="mdi:information-outline" width="16" />
-        已登录平台服务：模型调用走平台额度，下面这个 DeepSeek 余额不再被使用。
-      </p>
-
-      <p v-if="balanceError" class="alert" role="alert">
-        <Icon icon="mdi:alert-circle-outline" width="18" />{{ balanceError }}
-      </p>
-      <div v-else-if="balance" class="balance-grid">
-        <div class="balance-item">
-          <span class="balance-label">
-            <Icon icon="mdi:robot-outline" width="16" />DeepSeek
-          </span>
-          <template v-if="!balance.main?.configured">
-            <span class="balance-value muted">
-              <Icon icon="mdi:key-off-outline" width="16" />未配置密钥
+      <!-- 登录态：平台额度的三个滑动窗口（ADR-0048 修订 R10） -->
+      <template v-if="accountLoggedIn">
+        <p v-if="quotaError" class="alert" role="alert">
+          <Icon icon="mdi:alert-circle-outline" width="18" />{{ quotaError }}
+        </p>
+        <p v-else-if="quota && quota.reason" class="balance-note">
+          <Icon icon="mdi:information-outline" width="16" />{{ quotaReasonText }}
+        </p>
+        <p v-else-if="quota && !quota.has_entitlement" class="balance-note">
+          <Icon icon="mdi:ticket-confirmation-outline" width="16" />
+          还没有可用的服务包——兑换后即可使用平台额度。
+        </p>
+        <div v-else-if="quota" class="quota-grid">
+          <div v-for="w in quota.windows" :key="w.key" class="quota-item">
+            <div class="quota-row">
+              <span class="quota-label">{{ windowLabel(w.key) }}</span>
+              <span class="quota-count">
+                {{ w.used }}<template v-if="w.limit"> / {{ w.limit }}</template>
+                <span v-if="w.limit" class="quota-pct">{{ windowPercent(w) }}%</span>
+              </span>
+            </div>
+            <div
+              class="quota-bar"
+              role="progressbar"
+              :aria-valuenow="windowPercent(w)"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              :aria-label="windowLabel(w.key)"
+            >
+              <div
+                class="quota-fill"
+                :class="{ warn: windowPercent(w) >= 80 }"
+                :style="{ width: windowPercent(w) + '%' }"
+              ></div>
+            </div>
+            <span class="quota-hint">
+              <template v-if="w.limit">
+                剩余 {{ w.remaining }} 次<template v-if="w.resets_at"
+                  >（{{ formatMoment(w.resets_at) }} 起恢复）</template
+                >
+              </template>
+              <template v-else>不限次数</template>
             </span>
-          </template>
-          <template v-else-if="balance.main?.ok">
-            <span class="balance-value">
-              {{ money(balance.main.data.total_balance, balance.main.data.currency) }}
-            </span>
-            <span class="balance-note">
-              可用：
-              <Icon
-                v-if="balance.main.data.is_available"
-                icon="mdi:check-circle-outline"
-                width="14"
-              />
-              <Icon v-else icon="mdi:alert-circle-outline" width="14" />
-              {{ balance.main.data.is_available ? "是" : "否" }}
-            </span>
-          </template>
-          <span v-else class="balance-value error-text">
-            <Icon icon="mdi:alert-circle-outline" width="16" />{{ balance.main.error }}
-          </span>
+          </div>
+          <p v-if="quota.plan" class="balance-note">
+            <Icon icon="mdi:card-account-details-outline" width="16" />
+            当前套餐：{{ quota.plan.name }}
+            <template v-if="quota.entitlement?.expires_at">
+              （{{ formatMoment(quota.entitlement.expires_at) }} 到期）
+            </template>
+          </p>
         </div>
-      </div>
-      <div v-else class="empty">
-        <Icon icon="mdi:loading" width="24" class="spin" />
-        <p>正在查询余额…</p>
-      </div>
+        <div v-else class="empty">
+          <Icon icon="mdi:loading" width="24" class="spin" />
+          <p>正在查询额度…</p>
+        </div>
+      </template>
+
+      <!-- 未登录：保持原有的自备 Key 余额卡片 -->
+      <template v-else>
+        <p v-if="balanceError" class="alert" role="alert">
+          <Icon icon="mdi:alert-circle-outline" width="18" />{{ balanceError }}
+        </p>
+        <div v-else-if="balance" class="balance-grid">
+          <div class="balance-item">
+            <span class="balance-label">
+              <Icon icon="mdi:robot-outline" width="16" />DeepSeek
+            </span>
+            <template v-if="!balance.main?.configured">
+              <span class="balance-value muted">
+                <Icon icon="mdi:key-off-outline" width="16" />未配置密钥
+              </span>
+            </template>
+            <template v-else-if="balance.main?.ok">
+              <span class="balance-value">
+                {{ money(balance.main.data.total_balance, balance.main.data.currency) }}
+              </span>
+              <span class="balance-note">
+                可用：
+                <Icon
+                  v-if="balance.main.data.is_available"
+                  icon="mdi:check-circle-outline"
+                  width="14"
+                />
+                <Icon v-else icon="mdi:alert-circle-outline" width="14" />
+                {{ balance.main.data.is_available ? "是" : "否" }}
+              </span>
+            </template>
+            <span v-else class="balance-value error-text">
+              <Icon icon="mdi:alert-circle-outline" width="16" />{{ balance.main.error }}
+            </span>
+          </div>
+        </div>
+        <div v-else class="empty">
+          <Icon icon="mdi:loading" width="24" class="spin" />
+          <p>正在查询余额…</p>
+        </div>
+      </template>
     </section>
 
     <div v-if="loading" class="empty">

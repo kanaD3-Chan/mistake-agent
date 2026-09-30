@@ -112,9 +112,15 @@ async fn walkthrough_register_and_login_persist_token() {
 
     {
         let s = settings.read().expect("settings 读锁");
-        assert_eq!(s.account.email, email, "登录必须把邮箱落到 settings.account");
+        assert_eq!(
+            s.account.email, email,
+            "登录必须把邮箱落到 settings.account"
+        );
         assert_eq!(s.account.role, "user", "新注册账号的角色应当是 user");
-        assert!(s.account.token.starts_with("mka_"), "令牌应当是不透明的 mka_ 串");
+        assert!(
+            s.account.token.starts_with("mka_"),
+            "令牌应当是不透明的 mka_ 串"
+        );
         // 回归红线（§5 步骤 7 的一半）：不登录时行为不变——这里确认令牌没被塞进 main_model。
         assert_eq!(
             s.main_model.api_key, "sk-self-should-be-ignored",
@@ -122,7 +128,9 @@ async fn walkthrough_register_and_login_persist_token() {
         );
     }
     assert!(
-        !view.to_string().contains(&settings.read().unwrap().account.token),
+        !view
+            .to_string()
+            .contains(&settings.read().unwrap().account.token),
         "公开视图不得包含令牌明文"
     );
 
@@ -187,10 +195,7 @@ async fn walkthrough_platform_rejects_account_without_entitlement() {
         .register(&email, password, None)
         .await
         .expect("注册应当成功");
-    service
-        .login(&email, password)
-        .await
-        .expect("登录应当成功");
+    service.login(&email, password).await.expect("登录应当成功");
 
     let err = model
         .complete(
@@ -204,4 +209,38 @@ async fn walkthrough_platform_rejects_account_without_entitlement() {
         matches!(err, ModelError::QuotaExceeded(_)),
         "应当是 402 配额拒绝（no_entitlement），实际：{err:?}"
     );
+}
+
+/// 额度卡片的数据源：客户端能把服务端的「三滑动窗口」契约解析出来
+/// （ADR-0047 修订 R13 + ADR-0048 修订 R10）。
+#[tokio::test]
+#[ignore]
+async fn walkthrough_quota_view_has_three_windows() {
+    let url = server_url();
+    let email = std::env::var("PLATFORM_DEMO_EMAIL").unwrap_or_else(|_| "demo@example.test".into());
+    let password =
+        std::env::var("PLATFORM_DEMO_PASSWORD").unwrap_or_else(|_| "demo-password-123".into());
+
+    std::fs::create_dir_all(Settings::data_root()).expect("建隔离数据根失败");
+    let settings = Arc::new(RwLock::new(base_settings(&url)));
+    let (service, _model) = harness(settings);
+
+    service
+        .login(&email, &password)
+        .await
+        .unwrap_or_else(|e| panic!("demo 账号登录失败：{e:?}"));
+
+    let view = service.quota().await.expect("查询额度失败");
+    println!("额度视图：{view}");
+    assert!(view.get("reason").is_none(), "不该是错误态：{view}");
+    assert_eq!(view["has_entitlement"], true, "demo 账号应当有权益：{view}");
+
+    let windows = view["windows"].as_array().expect("windows 应当是数组");
+    assert_eq!(windows.len(), 3, "应当是三个滑动窗口：{view}");
+    for w in windows {
+        assert!(w["key"].is_string(), "窗口要有 key：{w}");
+        assert!(w["used"].is_number(), "窗口要有 used：{w}");
+        assert!(w["limit"].is_number(), "月卡三个窗口都该有上限：{w}");
+        assert!(w["remaining"].is_number(), "窗口要有 remaining：{w}");
+    }
 }

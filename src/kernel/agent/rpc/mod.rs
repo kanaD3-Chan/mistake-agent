@@ -436,6 +436,14 @@ impl RpcExtension for AppRpc {
                     .map(Some)
                     .map_err(account_rpc_error)
             }
+            // 平台额度（三窗口用量）：与 get_account_status 分开——卡片刷新很频繁，
+            // 不该顺带把账号资料也重读一遍。
+            "get_account_quota" => self
+                .account
+                .quota()
+                .await
+                .map(Some)
+                .map_err(account_rpc_error),
             "get_cache_stats" => {
                 let metas = self
                     .store

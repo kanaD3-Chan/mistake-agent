@@ -12,6 +12,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
+- **登录后的额度卡片**：设置页在登录态把「DeepSeek 余额」换成**平台额度的三个滑动窗口**（近 5 小时 / 近 7 天 / 近 30 天）——已用/上限、使用百分比进度条、剩余次数与「从某时刻起恢复」；未登录保持原余额卡片。客户端新增 RPC `get_account_quota`（透传服务端 `GET /api/v1/me/quota` 契约，ADR-0047 修订 R13 / ADR-0048 修订 R10、R12）
+
 - **平台额度视图端点** `GET /api/v1/me/quota`（ADR-0047 修订 R13）：返回套餐 + 三滑动窗口（5 小时 / 1 周 / 1 月）的 `limit`/`used`/`remaining`/`resets_at` + 权益快照，供客户端登录态的用量卡片渲染。`used` **刻意复用** `store::window_usage_tx`（含在飞的预留行），并有集成测试与真正的 `reserve()` 对撞，钉住「卡片说用尽 ⇒ 网关同样拒绝」。无生效权益回 `200` + 空窗口
 - **客户端 `check_balance` 在登录态不再使用自备 Key**：`BalanceReport` 增加 `platform` 标记，函数在**读取 key 之前**返回平台占位（结构性保证），补两个单测
 
